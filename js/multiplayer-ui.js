@@ -71,13 +71,23 @@ function render() {
       return row;
     }));
   }
+  const isHost = myId === room.hostId;
+  const isPlaying = room.phase === 'playing';
   if (start) {
-    start.hidden = myId !== room.hostId;
-    start.disabled = room.phase === 'playing';
+    start.hidden = !isHost || isPlaying;
+    start.disabled = false;
+    start.textContent = room.phase === 'finished' ? '▶ Начать новый матч' : '▶ Начать матч';
   }
-  showStatus(room.phase === 'playing' ? 'Раунд идёт.' :
-    room.phase === 'finished' ? 'Раунд завершён. Можно начать снова.' :
-      'Комната готова. Пригласите друзей по коду.');
+  const resume = $('mp-resume');
+  if (resume) resume.hidden = !isPlaying;
+  const guestHint = $('mp-guest-hint');
+  if (guestHint) {
+    guestHint.hidden = isHost || isPlaying;
+    guestHint.textContent = room.phase === 'finished' ? 'Ожидаем новый матч от создателя комнаты.' : 'Ожидаем, когда создатель комнаты начнёт матч.';
+  }
+  showStatus(isPlaying ? 'Матч начался. Играйте на арене. Чтобы вернуться, нажмите «?».'
+    : room.phase === 'finished' ? (isHost ? 'Матч завершён. Можно начать новый.' : 'Матч завершён. Ожидаем создателя.')
+    : (isHost ? 'Комната готова. Нажмите «Начать матч».' : 'Вы подключились. Ожидаем запуска матча создателем.'));
 }
 function setBusy(busy) {
   connecting = busy;
@@ -131,7 +141,12 @@ createTab?.addEventListener('click', () => showMode('create'));
 joinTab?.addEventListener('click', () => showMode('join'));
 createButton?.addEventListener('click', () => submit('create'));
 joinButton?.addEventListener('click', () => submit('join'));
-start?.addEventListener('click', () => window.dispatchEvent(new Event('mp:start-round')));
+start?.addEventListener('click', () => {
+  if (!room || myId !== room.hostId || room.phase === 'playing') return;
+  showStatus('Запускаем матч для всех участников…');
+  window.dispatchEvent(new Event('mp:start-round'));
+});
+$('mp-resume')?.addEventListener('click', () => window.dispatchEvent(new Event('mp:resume')));
 $('mp-leave')?.addEventListener('click', () => window.dispatchEvent(new Event('mp:leave')));
 $('mp-copy-code')?.addEventListener('click', async () => {
   if (!room) return;
