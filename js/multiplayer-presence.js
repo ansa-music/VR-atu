@@ -1,29 +1,23 @@
 import * as THREE from 'three';
 import { MultiplayerClient } from './multiplayer.js';
+import { createRemoteAvatar, skinId } from './skins.js';
 
 // Experimental network presence. Solo gameplay, scoring and targets remain LOCAL.
 export function initializeMultiplayerPresence(scene, camera) {
   const participants = new Map();
-  const headGeometry = new THREE.SphereGeometry(0.2, 12, 8);
-  const bodyGeometry = new THREE.CylinderGeometry(0.23, 0.28, 0.82, 10);
-  const headMaterial = new THREE.MeshStandardMaterial({ color: 0xe5d8ff, roughness: 0.55 });
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x563dd0, emissive: 0x271070, emissiveIntensity: 0.35 });
+  const remoteSkins = new Map();
   let client = null;
   let lastPublish = 0;
 
   function clear() {
     for (const avatar of participants.values()) scene.remove(avatar.group);
     participants.clear();
+    remoteSkins.clear();
   }
 
   function ensure(id) {
     if (participants.has(id)) return participants.get(id);
-    const group = new THREE.Group();
-    const head = new THREE.Mesh(headGeometry, headMaterial);
-    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-    head.position.y = 0;
-    body.position.y = -0.65;
-    group.add(head, body);
+    const { group } = createRemoteAvatar(remoteSkins.get(id) || 'cyan');
     scene.add(group);
     const item = { group, target: new THREE.Vector3(), quaternion: new THREE.Quaternion(), lastSeen: performance.now() };
     participants.set(id, item);
@@ -31,9 +25,25 @@ export function initializeMultiplayerPresence(scene, camera) {
   }
 
   function roomUpdate() {
-    const ids = new Set((client?.room?.players || []).map(p => p.id));
+    const players = client?.room?.players || [];
+    const ids = new Set(players.map(p => p.id));
+    for (const p of players) {
+      const nextSkin = skinId(p.skin);
+      if (remoteSkins.get(p.id) !== nextSkin) {
+        remoteSkins.set(p.id, nextSkin);
+        const existing = participants.get(p.id);
+        if (existing) {
+          const { group: replacement } = createRemoteAvatar(nextSkin);
+          replacement.position.copy(existing.group.position);
+          replacement.quaternion.copy(existing.group.quaternion);
+          scene.remove(existing.group);
+          scene.add(replacement);
+          existing.group = replacement;
+        }
+      }
+    }
     for (const [id, avatar] of participants) {
-      if (!ids.has(id)) { scene.remove(avatar.group); participants.delete(id); }
+      if (!ids.has(id)) { scene.remove(avatar.group); participants.delete(id); remoteSkins.delete(id); }
     }
   }
 
@@ -44,7 +54,10 @@ export function initializeMultiplayerPresence(scene, camera) {
     clear();
     client = new MultiplayerClient(url);
     window.dispatchEvent(new CustomEvent('mp:transport', { detail: { send: (type, data) => client.send(type, data) } }));
-    client.addEventListener('room:joined', roomUpdate);
+    client.addEventListener('room:joined', e => {
+      roomUpdate();
+      client.send('player:skin', { skin: skinId(window.vrAtuSelectedSkin) });
+    });
     client.addEventListener('room:update', roomUpdate);
     client.addEventListener('room:left', clear);
     client.addEventListener('status', e => { if (e.detail.state === 'disconnected') clear(); });
@@ -66,6 +79,7 @@ export function initializeMultiplayerPresence(scene, camera) {
       window.dispatchEvent(new CustomEvent('mp:error', { detail: { code: 'CONNECTION_FAILED' } }));
     }
   });
+  window.addEventListener('skin:changed', e => client?.send('player:skin', { skin: skinId(e.detail?.skin) }));
   window.addEventListener('mp:start-round', () => client?.startRound());
   window.addEventListener('mp:leave', () => { client?.leaveRoom(); clear(); });
 
