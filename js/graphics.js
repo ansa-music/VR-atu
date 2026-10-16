@@ -1,9 +1,21 @@
 import * as THREE from 'three';
+import { QUALITY } from './quality.js';
 
 // Графика: тон-маппинг, неоновая карта окружения, красивые мишени
 
+// качество по умолчанию для мишеней — последнее, переданное в setupGraphics
+let curQuality = QUALITY.high;
+const pickQuality = (opts) => (opts && opts.quality) || curQuality;
+// материал кристалла: physical | standard | basic
+const crystalMode = (q) => {
+  const m = q && q.crystal;
+  return m === 'standard' || m === 'basic' ? m : 'physical';
+};
+
 // Карта окружения: тёмная комната с неоновыми панелями, запекается в PMREM
-export function setupGraphics(renderer, scene) {
+export function setupGraphics(renderer, scene, opts = {}) {
+  const quality = opts && opts.quality;
+  if (quality) curQuality = quality;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.1;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -37,8 +49,11 @@ export function setupGraphics(renderer, scene) {
     p.lookAt(0, 0, 0);
     tmp.add(p);
   }
+  // размер PMREM в r160 фиксирован (256), так что карта одна на всех уровнях;
+  // на «низком» качестве без размытия — дешевле запекание при старте
+  const sigma = quality && quality.id === 'low' ? 0 : 0.04;
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const rt = pmrem.fromScene(tmp, 0.04);
+  const rt = pmrem.fromScene(tmp, sigma);
   scene.environment = rt.texture;
   pmrem.dispose();
   for (const d of disposables) d.dispose();
@@ -86,6 +101,10 @@ function merge(list) {
 function cache() {
   if (C) return C;
   C = {};
+  // корпуса мишеней: одна геометрия на тип (main удаляет только материал)
+  C.crystalGeo = new THREE.IcosahedronGeometry(1, 0).scale(0.85, 1, 0.85);
+  C.goldGeo = new THREE.OctahedronGeometry(1, 0).scale(0.72, 1, 0.72);
+  C.bombGeo = new THREE.SphereGeometry(1, 20, 14);
   // обычная: ядро и кольцо
   C.coreGeo = new THREE.SphereGeometry(0.45, 12, 8);
   C.ringGeo = new THREE.TorusGeometry(1.45, 0.025, 6, 48);
@@ -94,7 +113,6 @@ function cache() {
   const r1 = new THREE.TorusGeometry(1.3, 0.035, 6, 48);
   const r2 = r1.clone().rotateY(Math.PI / 2);
   C.goldRingsGeo = merge([r1, r2]);
-  C.goldRingMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, metalness: 1, roughness: 0.25, emissive: 0xff9a00, emissiveIntensity: 0.6 });
   C.sparkMat = new THREE.SpriteMaterial({ map: sparkTexture(), color: 0xfff0b0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
   // бомба: шипы, светящиеся кончики, пояс
   const dirs = [];
@@ -116,12 +134,52 @@ function cache() {
   }
   C.spikeGeo = merge(spikes);
   C.tipGeo = merge(tips);
-  C.spikeMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, metalness: 0.9, roughness: 0.35 });
   C.tipMat = new THREE.MeshBasicMaterial({ color: 0xff1030, toneMapped: false });
   C.bandGeo = new THREE.TorusGeometry(1.02, 0.07, 6, 40).rotateX(Math.PI / 2);
   C.bandMat = new THREE.MeshBasicMaterial({ color: 0xff2040, toneMapped: false });
   C.coreMats = new Map(); // ядро по цвету
+  C.byMode = {};          // материалы, зависящие от качества
   return C;
+}
+// прототипы материалов для уровня качества: корпуса клонируются на каждую мишень,
+// украшения (кольца, шипы) общие
+function protos(mode) {
+  let P = C.byMode[mode];
+  if (P) return P;
+  P = {};
+  if (mode === 'physical') {
+    P.crystal = new THREE.MeshPhysicalMaterial({
+      emissiveIntensity: 0.4, metalness: 0.1, roughness: 0.15,
+      clearcoat: 1, clearcoatRoughness: 0.1, iridescence: 0.6, iridescenceIOR: 1.6,
+      flatShading: true, transparent: true, opacity: 0.88, depthWrite: false,
+    });
+  } else if (mode === 'standard') {
+    P.crystal = new THREE.MeshStandardMaterial({
+      emissiveIntensity: 0.4, metalness: 0.1, roughness: 0.15,
+      flatShading: true, transparent: true, opacity: 0.88, depthWrite: false,
+    });
+  } else { // basic: неон без отражений — Ламберт с гранями и самосвечением
+    P.crystal = new THREE.MeshLambertMaterial({
+      emissiveIntensity: 0.55, flatShading: true, transparent: true, opacity: 0.88, depthWrite: false,
+    });
+  }
+  if (mode === 'basic') { // золото и бомба без PBR
+    P.gold = new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0xffa000, emissiveIntensity: 0.5, flatShading: true });
+    P.bomb = new THREE.MeshLambertMaterial({ color: 0x330a0a, emissive: 0xff0022, emissiveIntensity: 0.6 });
+    P.goldRing = new THREE.MeshLambertMaterial({ color: 0xffd23f, emissive: 0xff9a00, emissiveIntensity: 0.6 });
+    P.spike = new THREE.MeshLambertMaterial({ color: 0x1a1a22 });
+  } else {
+    P.gold = new THREE.MeshStandardMaterial({
+      color: 0xffd23f, metalness: 1, roughness: 0.2, emissive: 0xffa000, emissiveIntensity: 0.5, flatShading: true,
+    });
+    P.bomb = new THREE.MeshStandardMaterial({
+      color: 0x330a0a, metalness: 0.6, roughness: 0.35, emissive: 0xff0022, emissiveIntensity: 0.6,
+    });
+    P.goldRing = new THREE.MeshStandardMaterial({ color: 0xffd23f, metalness: 1, roughness: 0.25, emissive: 0xff9a00, emissiveIntensity: 0.6 });
+    P.spike = new THREE.MeshStandardMaterial({ color: 0x1a1a22, metalness: 0.9, roughness: 0.35 });
+  }
+  C.byMode[mode] = P;
+  return P;
 }
 function coreMat(color) {
   const key = new THREE.Color(color).getHex();
@@ -141,15 +199,13 @@ function spin(obj, sx, sy) {
   };
 }
 
-export function createTargetVisual(type, color = 0x3ec5ff) {
+// opts.quality — пресет из quality.js (по умолчанию — из setupGraphics)
+export function createTargetVisual(type, color = 0x3ec5ff, opts = {}) {
   cache();
+  const P = protos(crystalMode(pickQuality(opts)));
   if (type === 'gold') {
-    const geo = new THREE.OctahedronGeometry(1, 0).scale(0.72, 1, 0.72);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xffd23f, metalness: 1, roughness: 0.2, emissive: 0xffa000, emissiveIntensity: 0.5, flatShading: true,
-    });
-    const root = new THREE.Mesh(geo, mat);
-    const rings = new THREE.Mesh(C.goldRingsGeo, C.goldRingMat);
+    const root = new THREE.Mesh(C.goldGeo, P.gold.clone());
+    const rings = new THREE.Mesh(C.goldRingsGeo, P.goldRing);
     rings.rotation.x = 0.5;
     spin(rings, 0, 1.6);
     root.add(rings);
@@ -163,24 +219,17 @@ export function createTargetVisual(type, color = 0x3ec5ff) {
     return root;
   }
   if (type === 'bomb') {
-    const geo = new THREE.SphereGeometry(1, 20, 14);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x330a0a, metalness: 0.6, roughness: 0.35, emissive: 0xff0022, emissiveIntensity: 0.6,
-    });
-    const root = new THREE.Mesh(geo, mat);
-    root.add(new THREE.Mesh(C.spikeGeo, C.spikeMat));
+    const root = new THREE.Mesh(C.bombGeo, P.bomb.clone());
+    root.add(new THREE.Mesh(C.spikeGeo, P.spike));
     root.add(new THREE.Mesh(C.tipGeo, C.tipMat));
     root.add(new THREE.Mesh(C.bandGeo, C.bandMat));
     return root;
   }
   // обычная: огранённый кристалл
-  const geo = new THREE.IcosahedronGeometry(1, 0).scale(0.85, 1, 0.85);
-  const mat = new THREE.MeshPhysicalMaterial({
-    color, emissive: color, emissiveIntensity: 0.4, metalness: 0.1, roughness: 0.15,
-    clearcoat: 1, clearcoatRoughness: 0.1, iridescence: 0.6, iridescenceIOR: 1.6,
-    flatShading: true, transparent: true, opacity: 0.88, depthWrite: false,
-  });
-  const root = new THREE.Mesh(geo, mat);
+  const mat = P.crystal.clone();
+  mat.color.set(color);
+  mat.emissive.set(color);
+  const root = new THREE.Mesh(C.crystalGeo, mat);
   const core = new THREE.Mesh(C.coreGeo, coreMat(color));
   core.renderOrder = 2; // поверх полупрозрачной оболочки
   root.add(core);
@@ -189,4 +238,36 @@ export function createTargetVisual(type, color = 0x3ec5ff) {
   spin(ring, 0, 1.2);
   root.add(ring);
   return root;
+}
+
+// Материалы прогрева держат шейдерные программы: three.js удаляет программу,
+// когда dispose() снят последний материал с ней (иначе после исчезновения
+// последней золотой мишени следующая снова компилировала бы шейдер).
+let warmMats = [];
+
+// Заранее компилирует шейдеры всех видов мишеней, чтобы первое появление не дёргало кадр
+export function warmupTargets(renderer, scene, camera, opts = {}) {
+  if (!renderer || !scene || !camera) return;
+  cache();
+  const quality = pickQuality(opts);
+  const holder = new THREE.Group();
+  holder.position.set(0, -50, 0); // под полом, в кадр не попадает
+  const list = [
+    createTargetVisual('normal', 0x3ec5ff, { quality }),
+    createTargetVisual('gold', 0xffd23f, { quality }),
+    createTargetVisual('bomb', 0xff2244, { quality }),
+  ];
+  for (const t of list) holder.add(t);
+  scene.add(holder);
+  try {
+    renderer.compile(scene, camera);
+    if (renderer.initTexture) renderer.initTexture(C.sparkMat.map); // загрузка текстуры искры в GPU
+  } catch (e) {
+    console.warn(e);
+  }
+  scene.remove(holder);
+  // свои копии материалов не удаляем, а держим вместо прежних (см. warmMats)
+  const old = warmMats;
+  warmMats = list.map((t) => t.material);
+  for (const m of old) if (!warmMats.includes(m)) m.dispose();
 }

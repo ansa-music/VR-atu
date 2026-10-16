@@ -312,6 +312,31 @@ function softGlowTexture() {
   return t;
 }
 
+// слияние коробок одного материала в одну геометрию: [w, h, d, x, y, z] → позиции, нормали, uv
+function mergeBoxes(list) {
+  const geos = list.map(([w, h, d, x, y, z]) => new THREE.BoxGeometry(w, h, d).translate(x, y, z));
+  let nv = 0, ni = 0;
+  for (const g of geos) { nv += g.attributes.position.count; ni += g.index.count; }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
+  const idx = new Uint16Array(ni);
+  let vo = 0, io = 0;
+  for (const g of geos) {
+    pos.set(g.attributes.position.array, vo * 3);
+    nor.set(g.attributes.normal.array, vo * 3);
+    uv.set(g.attributes.uv.array, vo * 2);
+    const ia = g.index.array;
+    for (let i = 0; i < ia.length; i++) idx[io++] = ia[i] + vo;
+    vo += g.attributes.position.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
 export function createAtuLogo(scene) {
   // группа в середине пролёта, +Z смотрит в центр арены, локальная X — вдоль балки
   const group = new THREE.Group();
@@ -323,44 +348,40 @@ export function createAtuLogo(scene) {
   const colliders = [];
   const metal = new THREE.MeshStandardMaterial({ color: 0x1a1f3a, metalness: 0.9, roughness: 0.3 });
 
-  // ---- Балка между капителями ----
+  // ---- Металл: балка между капителями, две стойки табло и нижняя планка — один меш ----
   const span = P12.distanceTo(P13); // 5.46 м между осями колонн
-  const beam = new THREE.Mesh(new THREE.BoxGeometry(span, 0.36, 0.32), metal);
-  beam.position.y = BEAM_Y;
-  group.add(beam);
-  colliders.push(beam);
+  const boardBottom = BOARD_Y - BOARD_H / 2;
+  const beamTop = BEAM_Y + 0.18;
+  const strutH = boardBottom + 0.08 - beamTop;
+  const frame = new THREE.Mesh(mergeBoxes([
+    [span, 0.36, 0.32, 0, BEAM_Y, 0],                            // балка
+    [0.08, strutH, 0.08, -1.6, beamTop + strutH / 2, -0.06],     // стойки
+    [0.08, strutH, 0.08, 1.6, beamTop + strutH / 2, -0.06],
+    [4.4, 0.07, 0.07, 0, boardBottom + 0.04, -0.06],             // планка
+  ]), metal);
+  group.add(frame);
+  colliders.push(frame);
 
-  // светящиеся кромки: спереди сверху/снизу и снизу по центру
+  // светящиеся кромки: спереди сверху/снизу и снизу по центру — один инстанс,
+  // у каждой свой пульс через instanceColor
   const stripLen = span - 0.72; // между капителями (0.7 м)
-  const stripMats = [];
   const strips = [
     [CYAN, [stripLen, 0.045, 0.02], [0, BEAM_Y - 0.15, 0.17]],
     [PINK, [stripLen, 0.045, 0.02], [0, BEAM_Y + 0.15, 0.17]],
     [VIOLET, [stripLen, 0.02, 0.08], [0, BEAM_Y - 0.19, 0]],
   ];
-  for (const [c, size, p] of strips) {
-    const m = new THREE.MeshBasicMaterial({ color: c, toneMapped: false, fog: false });
-    const s = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), m);
-    s.position.set(p[0], p[1], p[2]);
-    group.add(s);
-    stripMats.push({ mat: m, base: new THREE.Color(c) });
-  }
-
-  // ---- Крепление табло: две стойки и нижняя планка ----
-  const boardBottom = BOARD_Y - BOARD_H / 2;
-  const beamTop = BEAM_Y + 0.18;
-  const strutH = boardBottom + 0.08 - beamTop;
-  const strutGeo = new THREE.BoxGeometry(0.08, strutH, 0.08);
-  for (const sx of [-1, 1]) {
-    const strut = new THREE.Mesh(strutGeo, metal);
-    strut.position.set(sx * 1.6, beamTop + strutH / 2, -0.06);
-    group.add(strut);
-    colliders.push(strut);
-  }
-  const rail = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.07, 0.07), metal);
-  rail.position.set(0, boardBottom + 0.04, -0.06);
-  group.add(rail);
-  colliders.push(rail);
+  const stripMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ toneMapped: false, fog: false }), strips.length);
+  const stripBase = [];
+  const m4 = new THREE.Matrix4(), q0 = new THREE.Quaternion(), pv = new THREE.Vector3(), sv = new THREE.Vector3();
+  const sc = new THREE.Color();
+  strips.forEach(([c, size, p], i) => {
+    stripMesh.setMatrixAt(i, m4.compose(pv.set(p[0], p[1], p[2]), q0, sv.set(size[0], size[1], size[2])));
+    stripMesh.setColorAt(i, sc.set(c));
+    stripBase.push(new THREE.Color(c));
+  });
+  stripMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  group.add(stripMesh);
 
   // ---- Табло с логотипом ----
   const cv = document.createElement('canvas');
@@ -422,10 +443,10 @@ export function createAtuLogo(scene) {
     }
     boardMat.opacity = k;
     glowMat.opacity = 0.32 * k * (0.9 + 0.1 * Math.sin(t * 3.1));
-    for (let i = 0; i < stripMats.length; i++) {
-      const s = stripMats[i];
-      s.mat.color.copy(s.base).multiplyScalar(0.8 + 0.2 * Math.sin(t * 2 + i * 2.1));
+    for (let i = 0; i < stripBase.length; i++) {
+      stripMesh.setColorAt(i, sc.copy(stripBase[i]).multiplyScalar(0.8 + 0.2 * Math.sin(t * 2 + i * 2.1)));
     }
+    stripMesh.instanceColor.needsUpdate = true;
   }
 
   return { group, colliders, update };

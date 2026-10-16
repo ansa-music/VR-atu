@@ -5,6 +5,7 @@ import * as THREE from 'three';
 // ровно между колоннами 12 (0, ·, -14) и 13 (5.36, ·, -12.93).
 // Всё строится в группе, повёрнутой так, что её локальная -Z смотрит вдоль D,
 // а +X — вправо (если смотреть из центра арены). Всё дальше ~40 м — fog: false.
+// Статика (рамы, табло, колпачки, гребень вала) слита по материалам, тяги и ободья — инстансы.
 
 const LANE_YAW = -Math.PI / 16; // поворот группы: (0,0,-1) → D, (1,0,0) → (0.981, 0, 0.195)
 
@@ -28,7 +29,14 @@ const BASE_GLOW = 0.3;   // самосвечение краски, чтобы ч
 const MAX_SPLASH = 8;    // следов свинца на краске
 const TEX = 256;         // размер текстуры краски
 
+// атлас табло: три строки 512×256 (по гонгу), тёмный зазор и белый блок для колпачков и гребня
+const ATLAS_W = 512, ROW = 256, ATLAS_H = 1024;
+const GAP_Y = ROW * GONGS.length, WHITE_Y = GAP_Y + 64;
+const WHITE_UV = [0.5, 1 - (WHITE_Y + ATLAS_H) / 2 / ATLAS_H]; // центр белого блока (flipY)
+const RIM_RATIO = 0.1;   // трубка обода / его радиус (единичный тор для инстансов)
+
 const css = (hex) => '#' + hex.toString(16).padStart(6, '0');
+const WHITE3 = { r: 1, g: 1, b: 1 };
 
 // скруглённый прямоугольник (без зависимости от ctx.roundRect)
 function roundRectPath(g, x, y, w, h, r) {
@@ -176,6 +184,54 @@ function glowTexture() {
   return t;
 }
 
+// слияние статических кусков в одну индексированную геометрию: позиции, нормали, uv (+ цвет вершин).
+// part: { geo, color?, uvConst?: [u, v], vRange?: [v0, v1], groups?: [номера материалов из geo.groups] }
+function mergeParts(parts, withColor = false) {
+  let nv = 0, ni = 0;
+  const ranges = parts.map(({ geo, groups }) => {
+    const r = []; // пары [начало, длина] в индексе
+    if (groups) {
+      for (const gr of geo.groups) if (groups.includes(gr.materialIndex)) r.push(gr.start, gr.count);
+    } else {
+      r.push(0, geo.index ? geo.index.count : geo.attributes.position.count);
+    }
+    nv += geo.attributes.position.count;
+    for (let i = 1; i < r.length; i += 2) ni += r[i];
+    return r;
+  });
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
+  const clr = withColor ? new Float32Array(nv * 3) : null;
+  const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vo = 0, io = 0;
+  parts.forEach((p, k) => {
+    const a = p.geo.attributes, n = a.position.count, ix = p.geo.index;
+    pos.set(a.position.array, vo * 3);
+    nor.set(a.normal.array, vo * 3);
+    const c = p.color || WHITE3;
+    for (let i = 0; i < n; i++) {
+      let u = a.uv.getX(i), v = a.uv.getY(i);
+      if (p.uvConst) { u = p.uvConst[0]; v = p.uvConst[1]; }
+      else if (p.vRange) v = p.vRange[0] + v * (p.vRange[1] - p.vRange[0]);
+      const j = vo + i;
+      uv[j * 2] = u;
+      uv[j * 2 + 1] = v;
+      if (clr) { clr[j * 3] = c.r; clr[j * 3 + 1] = c.g; clr[j * 3 + 2] = c.b; }
+    }
+    const r = ranges[k];
+    for (let s = 0; s < r.length; s += 2) {
+      for (let i = r[s], e = r[s] + r[s + 1]; i < e; i++) idx[io++] = (ix ? ix.getX(i) : i) + vo;
+    }
+    vo += n;
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  if (clr) g.setAttribute('color', new THREE.BufferAttribute(clr, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  return g;
+}
+
 export function createRange(scene) {
   const lane = new THREE.Group();
   lane.name = 'range';
@@ -187,6 +243,12 @@ export function createRange(scene) {
   const gongs = [];
   const byMesh = new Map();
   const col = new THREE.Color();
+  const m4 = new THREE.Matrix4(), m5 = new THREE.Matrix4(), q0 = new THREE.Quaternion(), pv = new THREE.Vector3(), sv = new THREE.Vector3();
+
+  // статика копится в списках и сливается в конце: по мешу на материал + невидимый коллайдер
+  const metalParts = []; // стойки, перекладины, укосины, корпуса табло
+  const glowParts = [];  // колпачки, лица табло, гребень вала: атлас × цвет вершин
+  const colParts = [];   // то же, обо что пули останавливались и раньше
 
   // ---- Полоса: тёмный слегка отражающий пол 15–125 м, ширина 12 м ----
   const L0 = 15, L1 = 125, W = 12, LEN = L1 - L0, MID = -(L0 + L1) / 2;
@@ -216,7 +278,6 @@ export function createRange(scene) {
     }),
     bars.length
   );
-  const m4 = new THREE.Matrix4(), q0 = new THREE.Quaternion(), pv = new THREE.Vector3(), sv = new THREE.Vector3();
   bars.forEach(([x, z, w, l, c, k], i) => {
     barMesh.setMatrixAt(i, m4.compose(pv.set(x, 0.006, z), q0, sv.set(w, 1, l)));
     barMesh.setColorAt(i, col.set(c).multiplyScalar(k));
@@ -257,17 +318,50 @@ export function createRange(scene) {
   }));
   berm.position.set(0, 0, -121);
   lane.add(berm);
-  const ridge = new THREE.Mesh(new THREE.BoxGeometry(16, 0.06, 0.06),
-    new THREE.MeshBasicMaterial({ color: VIOLET, toneMapped: false, fog: false }));
-  ridge.position.set(0, 3.4, -121 + 1.1);
-  lane.add(ridge);
+  // светящийся гребень вала — в общий светящийся меш (пули его не задевали — в коллайдер не идёт)
+  glowParts.push({
+    geo: new THREE.BoxGeometry(16, 0.06, 0.06).translate(0, 3.4, -121 + 1.1),
+    color: new THREE.Color(VIOLET), uvConst: WHITE_UV,
+  });
 
   // ---- Гонги ----
   const metalMat = new THREE.MeshStandardMaterial({ color: 0x1a1f3a, metalness: 0.85, roughness: 0.35, fog: false });
   const edgeMat = new THREE.MeshStandardMaterial({ color: 0x3a404c, metalness: 0.9, roughness: 0.3, fog: false });
-  const backMat = new THREE.MeshStandardMaterial({ color: 0x7d838e, metalness: 0.3, roughness: 0.7, fog: false });
   const haloTex = glowTexture();
-  const boardRedraws = [];
+
+  // атлас табло: строки по гонгам; рисуем каждую строку с обрезкой — как на отдельном холсте
+  const atlasCv = document.createElement('canvas');
+  atlasCv.width = ATLAS_W;
+  atlasCv.height = ATLAS_H;
+  const actx = atlasCv.getContext('2d');
+  actx.fillStyle = '#070b1a';
+  actx.fillRect(0, GAP_Y, ATLAS_W, WHITE_Y - GAP_Y); // зазор: мип-уровни не тянут белое в табло
+  actx.fillStyle = '#ffffff';
+  actx.fillRect(0, WHITE_Y, ATLAS_W, ATLAS_H - WHITE_Y);
+  const atlas = new THREE.CanvasTexture(atlasCv);
+  atlas.colorSpace = THREE.SRGBColorSpace;
+  atlas.anisotropy = 4;
+  const drawLabels = () => {
+    GONGS.forEach((cfg, i) => {
+      actx.save();
+      actx.beginPath();
+      actx.rect(0, i * ROW, ATLAS_W, ROW);
+      actx.clip();
+      actx.translate(0, i * ROW);
+      drawBoard(actx, ATLAS_W, ROW, `${cfg.d} м`, cfg.color);
+      actx.restore();
+    });
+    atlas.needsUpdate = true;
+  };
+  drawLabels();
+
+  // качающиеся части всех гонгов: тяги и неоновые ободья — по одному инстансу
+  const rods = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6), metalMat, GONGS.length * 2);
+  const rims = new THREE.InstancedMesh(new THREE.TorusGeometry(1, RIM_RATIO, 8, 64),
+    new THREE.MeshBasicMaterial({ toneMapped: false, fog: false }), GONGS.length);
+  rods.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  rims.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  rods.frustumCulled = rims.frustumCulled = false;
 
   GONGS.forEach((cfg, idx) => {
     const R = cfg.dia / 2;
@@ -277,45 +371,40 @@ export function createRange(scene) {
     const postX = R + 0.28 + t / 2;
     const H = yb + t * 0.5;                // высота стоек
     const label = `${cfg.d} м`;
+    const gColor = new THREE.Color(cfg.color);
 
     const frame = new THREE.Group();
     frame.position.set(cfg.off, 0, -cfg.d);
     frame.rotation.y = Math.atan2(-cfg.off, cfg.d); // лицом точно к центру арены
+    frame.updateMatrix();
     lane.add(frame);
+    const FM = frame.matrix;
+    // кусок рамы: смещение в раме → координаты полосы
+    const put = (geo, x, y, z) => geo.applyMatrix4(m4.multiplyMatrices(FM, m5.makeTranslation(x, y, z)));
 
     // стойки с неоновыми колпачками
-    const capMat = new THREE.MeshBasicMaterial({ color: cfg.color, toneMapped: false, fog: false });
-    const postGeo = new THREE.BoxGeometry(t, H, t);
-    const capGeo = new THREE.BoxGeometry(t * 1.6, t * 0.7, t * 1.6);
     for (const sx of [-1, 1]) {
-      const post = new THREE.Mesh(postGeo, metalMat);
-      post.position.set(sx * postX, H / 2, 0);
-      frame.add(post);
-      colliders.push(post);
-      const cap = new THREE.Mesh(capGeo, capMat);
-      cap.position.set(sx * postX, H + t * 0.35, 0);
-      frame.add(cap);
-      colliders.push(cap);
+      const post = put(new THREE.BoxGeometry(t, H, t), sx * postX, H / 2, 0);
+      metalParts.push({ geo: post });
+      colParts.push({ geo: post });
+      const cap = put(new THREE.BoxGeometry(t * 1.6, t * 0.7, t * 1.6), sx * postX, H + t * 0.35, 0);
+      glowParts.push({ geo: cap, color: gColor, uvConst: WHITE_UV });
+      colParts.push({ geo: cap });
     }
     // перекладина
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(2 * postX + t, t * 0.85, t * 0.85), metalMat);
-    bar.position.y = yb;
-    frame.add(bar);
-    colliders.push(bar);
+    const bar = put(new THREE.BoxGeometry(2 * postX + t, t * 0.85, t * 0.85), 0, yb, 0);
+    metalParts.push({ geo: bar });
+    colParts.push({ geo: bar });
 
     // подвес: вращается вокруг оси перекладины (локальная X)
     const pivot = new THREE.Group();
     pivot.position.y = yb;
     frame.add(pivot);
 
-    // тяги от перекладины к пластине
+    // тяги от перекладины к пластине (инстансы; матрицы — в системе подвеса)
     const rodLen = chain + 0.15 * R;
-    const rodGeo = new THREE.CylinderGeometry(t * 0.16, t * 0.16, rodLen, 6);
-    for (const sx of [-1, 1]) {
-      const rod = new THREE.Mesh(rodGeo, metalMat);
-      rod.position.set(sx * R * 0.45, -rodLen / 2, 0);
-      pivot.add(rod);
-    }
+    const rodLocal = [-1, 1].map((sx) => new THREE.Matrix4().compose(
+      pv.set(sx * R * 0.45, -rodLen / 2, 0), q0, sv.set(t * 0.16, rodLen, t * 0.16)));
 
     // пластина: тонкий цилиндр, лицевой торец (+Z) — с текстурой краски
     const thick = 0.022 + 0.012 * cfg.dia;
@@ -326,6 +415,19 @@ export function createRange(scene) {
       ua.setXY(i, pa.getX(i) / (2 * R) + 0.5, pa.getY(i) / (2 * R) + 0.5);
     }
     ua.needsUpdate = true;
+    // тыльный торец из зоны стрельбы не виден (качание < 90°) — рисуем его
+    // материалом бока одним вызовом с ним: группы «бок+тыл» и «лицо»
+    {
+      const ix = plateGeo.index.array, [gSide, gFace, gBack] = plateGeo.groups;
+      const re = new ix.constructor(ix.length);
+      re.set(ix.subarray(gSide.start, gSide.start + gSide.count), 0);
+      re.set(ix.subarray(gBack.start, gBack.start + gBack.count), gSide.count);
+      re.set(ix.subarray(gFace.start, gFace.start + gFace.count), gSide.count + gBack.count);
+      plateGeo.setIndex(new THREE.BufferAttribute(re, 1));
+      plateGeo.clearGroups();
+      plateGeo.addGroup(0, gSide.count + gBack.count, 0);
+      plateGeo.addGroup(gSide.count + gBack.count, gFace.count, 1);
+    }
 
     const cv = document.createElement('canvas');
     cv.width = cv.height = TEX;
@@ -336,16 +438,16 @@ export function createRange(scene) {
       map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: BASE_GLOW,
       roughness: 0.62, metalness: 0.12, fog: false,
     });
-    const plate = new THREE.Mesh(plateGeo, [edgeMat, faceMat, backMat]); // группы: бок, лицо, тыл
+    const plate = new THREE.Mesh(plateGeo, [edgeMat, faceMat]); // группы: бок+тыл, лицо
     plate.position.y = -(chain + R);
     plate.name = `gong-${cfg.d}`;
     pivot.add(plate);
 
-    // неоновый обод
+    // неоновый обод (инстанс; единичный тор в масштабе обода, в системе подвеса)
     const tube = 0.01 + 0.0004 * cfg.d;
-    const rimMat = new THREE.MeshBasicMaterial({ color: cfg.color, toneMapped: false, fog: false });
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(R + tube * 0.6, tube, 8, 64), rimMat);
-    plate.add(rim);
+    const rimLocal = new THREE.Matrix4().compose(
+      pv.set(0, -(chain + R), 0), q0, sv.setScalar(R + tube * 0.6));
+    rims.setColorAt(idx, gColor);
     // ореол за пластиной — заметен издалека
     const haloMat = new THREE.MeshBasicMaterial({
       map: haloTex, color: cfg.color, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending,
@@ -355,35 +457,22 @@ export function createRange(scene) {
     halo.position.z = -thick / 2 - 0.01;
     plate.add(halo);
 
-    // табло дистанции над рамой
+    // табло дистанции над рамой: корпус — металл, лицо (+Z) — строка атласа
     const bw = cfg.board, bh = bw / 2, bd = 0.03 + 0.01 * bw;
     const boardY = H + t * 0.7 + 0.1 * bw + bh / 2;
-    const bcv = document.createElement('canvas');
-    bcv.width = 512;
-    bcv.height = 256;
-    const bctx = bcv.getContext('2d');
-    const btex = new THREE.CanvasTexture(bcv);
-    btex.colorSpace = THREE.SRGBColorSpace;
-    btex.anisotropy = 4;
-    const redraw = () => { drawBoard(bctx, 512, 256, label, cfg.color); btex.needsUpdate = true; };
-    redraw();
-    boardRedraws.push(redraw);
-    const bFace = new THREE.MeshBasicMaterial({ map: btex, toneMapped: false, fog: false });
-    const board = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd),
-      [metalMat, metalMat, metalMat, metalMat, bFace, metalMat]); // +Z — лицо
-    board.position.set(0, boardY, 0);
-    frame.add(board);
-    colliders.push(board);
+    const board = put(new THREE.BoxGeometry(bw, bh, bd), 0, boardY, 0);
+    metalParts.push({ geo: board, groups: [0, 1, 2, 3, 5] });
+    glowParts.push({ geo: board, groups: [4], vRange: [1 - (idx + 1) * ROW / ATLAS_H, 1 - idx * ROW / ATLAS_H] });
+    colParts.push({ geo: board });
     const strutH = boardY - yb;
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(t * 0.6, strutH, t * 0.6), metalMat);
-    strut.position.set(0, yb + strutH / 2, -(bd / 2 + t * 0.3));
-    frame.add(strut);
-    colliders.push(strut);
+    const strut = put(new THREE.BoxGeometry(t * 0.6, strutH, t * 0.6), 0, yb + strutH / 2, -(bd / 2 + t * 0.3));
+    metalParts.push({ geo: strut });
+    colParts.push({ geo: strut });
 
     const gg = {
-      d: cfg.d, pts: cfg.pts, label, R, chain,
-      pivot, plate, faceMat, rimMat, haloMat,
-      baseColor: new THREE.Color(cfg.color),
+      idx, d: cfg.d, pts: cfg.pts, label, R, chain,
+      pivot, plate, faceMat, haloMat, frameMatrix: FM, rodLocal, rimLocal,
+      baseColor: gColor,
       w0: (Math.PI * 2) / cfg.period, amp: cfg.amp,
       angle: 0, vel: 0, moving: false, cooldown: 0, flash: 0,
       ctx: cv.getContext('2d'), tex, splashes: [], phase: idx * 1.7,
@@ -394,8 +483,33 @@ export function createRange(scene) {
     byMesh.set(plate, gg);
   });
 
+  rims.instanceColor.setUsage(THREE.DynamicDrawUsage); // пульс обода — каждый кадр
+
+  // слитая статика: металл рам и табло, светящиеся детали, невидимый коллайдер для пуль
+  const metalMesh = new THREE.Mesh(mergeParts(metalParts), metalMat);
+  const glowMesh = new THREE.Mesh(mergeParts(glowParts, true),
+    new THREE.MeshBasicMaterial({ map: atlas, vertexColors: true, toneMapped: false, fog: false }));
+  const colMesh = new THREE.Mesh(mergeParts(colParts), metalMat);
+  colMesh.visible = false; // не рисуется, рейкаст видимость не проверяет
+  colMesh.name = 'range-colliders';
+  lane.add(metalMesh, glowMesh, colMesh, rods, rims);
+  colliders.push(colMesh);
+  for (const p of [...metalParts, ...glowParts]) p.geo.dispose();
+
+  // тяги и ободья следуют за подвесом: матрица рамы × подвес × своё смещение
+  const mA = new THREE.Matrix4(), mB = new THREE.Matrix4();
+  function placeSwing(gg) {
+    mA.multiplyMatrices(gg.frameMatrix, gg.pivot.matrix);
+    rods.setMatrixAt(gg.idx * 2, mB.multiplyMatrices(mA, gg.rodLocal[0]));
+    rods.setMatrixAt(gg.idx * 2 + 1, mB.multiplyMatrices(mA, gg.rodLocal[1]));
+    rims.setMatrixAt(gg.idx, mB.multiplyMatrices(mA, gg.rimLocal));
+    rods.instanceMatrix.needsUpdate = true;
+    rims.instanceMatrix.needsUpdate = true;
+  }
+
   lane.updateMatrixWorld(true); // рейкаст работает сразу, до первого кадра
-  watchFont(() => { for (const r of boardRedraws) r(); });
+  for (const gg of gongs) placeSwing(gg);
+  watchFont(drawLabels);
 
   const tmp = new THREE.Vector3();
   const WHITE = new THREE.Color(0xffffff);
@@ -457,14 +571,16 @@ export function createRange(scene) {
         }
         gg.pivot.rotation.x = gg.angle; // +угол — низ пластины уходит от стрелка
         gg.pivot.updateMatrixWorld(true);
+        placeSwing(gg);
       }
       // вспышка при попадании и лёгкий пульс обода
       if (gg.flash > 0) gg.flash = Math.max(0, gg.flash - dt * 2.8);
       const f = gg.flash * gg.flash;
       gg.faceMat.emissiveIntensity = BASE_GLOW + 1.4 * f;
-      gg.rimMat.color.copy(gg.baseColor).multiplyScalar(0.85 + 0.15 * Math.sin(t * 2.4 + gg.phase)).lerp(WHITE, 0.7 * f);
+      rims.setColorAt(gg.idx, col.copy(gg.baseColor).multiplyScalar(0.85 + 0.15 * Math.sin(t * 2.4 + gg.phase)).lerp(WHITE, 0.7 * f));
       gg.haloMat.opacity = 0.4 + 0.08 * Math.sin(t * 1.8 + gg.phase) + 0.5 * f;
     }
+    rims.instanceColor.needsUpdate = true;
   }
 
   return { meshes, colliders, hit, update };
