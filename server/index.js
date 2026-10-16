@@ -40,7 +40,7 @@ function handle(player, msg) {
   switch (msg.type) {
     case 'room:create': {
       if (room) return send(player.socket, 'error', { code: 'ALREADY_IN_ROOM' });
-      const created = rooms.create(player, msg.name);
+      const created = rooms.create(player, msg.name, msg.options || {});
       send(player.socket, 'room:joined', { playerId: player.id, room: rooms.snapshot(created) });
       break;
     }
