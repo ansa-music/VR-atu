@@ -7,7 +7,7 @@ const makeRound = () => {
   let time = 1000;
   const store = new RoomStore({ now: () => time });
   const player = { id: 'p1', roomCode: null };
-  const room = store.create(player, 'Tester');
+  const room = store.create(player, 'Tester', { mode: 'targets' });
   store.start(room, player.id);
   clearArena(room);
   return { room, player, setNow: v => { time = v; } };

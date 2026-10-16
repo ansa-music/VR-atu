@@ -2,7 +2,7 @@
 
 The map/integration session owns `js/pvp-map.js`, team selection, spawn events,
 player movement integration and server player hits. This support change is
-limited to `js/pvp-layout.js` and `server/pvp-layout.test.js`; it keeps every
+limited to shared geometry and regression tests; it keeps every
 obstacle and spawn coordinate unchanged.
 
 ## Shared functions
@@ -29,8 +29,8 @@ obstacle and spawn coordinate unchanged.
 
 Use the same layout functions on browser and server. Clients alone cannot
 validate hits, movement speed, team ownership, respawn timing or spawn immunity.
-The existing `SPAWN_SHIELD_MS` and `RESPAWN_MS` constants still require enforcement
-by the server's PvP state machine.
+The server's `server/pvp.js` now enforces the existing `SPAWN_SHIELD_MS` and
+`RESPAWN_MS` constants; focused combat regression tests exercise those timings.
 
 ## Spawn protection finding
 
@@ -48,7 +48,7 @@ no intervening obstacle (one-based slot numbers from `SPAWNS`):
 
 The central spawn screens do not protect these flank sightlines. The map is
 still rotationally symmetric, but its spawn areas are not completely screened.
-The integration must enforce spawn immunity; if permanent geometric protection
+The server currently enforces temporary spawn immunity; if permanent geometric protection
 is intended, the map author should adjust the flank screens and rerun ray tests.
 No obstacle dimensions were changed in this support patch.
 
@@ -62,3 +62,29 @@ height-sensitive cover, metric ray lengths, perimeter and malformed rays.
 These tests validate geometry contracts, not a completed two-player PvP match.
 The integration session still needs to exercise team selection, death, respawn,
 shield expiry and shooting players behind cover with two connected clients.
+
+## Integration follow-up after syncing the parallel session
+
+The support branch includes the PvP integration through `9d2c972`. All 41 tests
+pass, including four added PvP tests: spawn shield expiry, cover occlusion,
+kill/death/respawn accounting and friendly-fire/dead-shooter rejection. Existing
+classic target-network tests now request `mode: 'targets'` explicitly because
+PvP became the default room mode.
+
+Remaining integration points for the map/session owner:
+
+- `poseValidForPvp` currently checks only the destination with `walkable(...,.20)`
+  and a speed allowance. The client now prevents tunnelling, but the server
+  should also reject pose segments crossing cover, using the same collision
+  radius as the client. Do not treat this client fix as server anti-cheat.
+- Random spawn selection does not reserve slots and can place teammates at the
+  same slot; use room occupancy when choosing a spawn if overlaps matter.
+- In the synced UI, `mp-game-mode` is present but the create-room payload still
+  needs its selected mode wired into `options.mode`. Keep the classic browser
+  smoke scenario explicit about its mode as well.
+- The browser smoke currently checks the older ammo/ADS HUD; adapt its assertions
+  to the PvP HUD before claiming a complete browser PvP test.
+
+These are handoff findings rather than unverified fixes to the parallel
+session's implementation. No map visuals, teams, hit damage, timing or player
+controller code were changed by this support patch.

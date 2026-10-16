@@ -44,7 +44,7 @@ test('two WebSocket players share round, hits, ownership and cleanup', { timeout
   const a = await connect(url), b = await connect(url);
   t.after(() => { a.socket.terminate(); b.socket.terminate(); });
   const { playerId } = await a.take('welcome');
-  a.send('room:create', { name: 'Host', options: { code: '123' } });
+  a.send('room:create', { name: 'Host', options: { code: '123', mode: 'targets' } });
   await a.take('room:joined');
   b.send('room:join', { code: '123', name: 'Guest' });
   const guest = await b.take('room:joined');
