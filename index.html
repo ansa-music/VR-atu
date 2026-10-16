@@ -8,10 +8,35 @@
     html, body { margin: 0; height: 100%; overflow: hidden; background: #070b1a; font-family: system-ui, sans-serif; }
     canvas { display: block; cursor: crosshair; }
     #info {
-      position: absolute; top: 12px; left: 12px; max-width: 340px;
+      position: absolute; top: 12px; left: 12px; max-width: 360px;
       padding: 10px 14px; border-radius: 10px;
-      color: #fff; background: rgba(0, 0, 0, .45); font-size: 14px; line-height: 1.45;
+      color: #fff; background: rgba(0, 0, 0, .5); font-size: 13px; line-height: 1.45;
     }
+    #info b { font-size: 15px; }
+    #info .row { margin-top: 6px; }
+    #mk {
+      position: absolute; top: 12px; right: 12px;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    }
+    #mk-connect {
+      padding: 10px 16px; border: 0; border-radius: 10px; cursor: pointer;
+      background: #34e89e; color: #06261a; font: bold 15px system-ui, sans-serif;
+    }
+    #mk-connect:hover { filter: brightness(1.1); }
+    #mk-status {
+      max-width: 260px; padding: 6px 10px; border-radius: 8px; text-align: right;
+      color: #c9d6ff; background: rgba(0, 0, 0, .5); font-size: 12px;
+    }
+    #crosshair {
+      position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+      transform: translate(-50%, -50%); pointer-events: none; opacity: .85;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: #fff; box-shadow: 0 0 3px #000;
+    }
+    #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+    #crosshair::after { top: 10px; left: 0; height: 2px; width: 22px; }
+    body.locked canvas { cursor: none; }
   </style>
   <script type="importmap">
     {
@@ -25,10 +50,17 @@
 <body>
   <div id="info">
     <b>VR Тир</b><br>
-    Сбивай кристаллы 60 секунд: обычный +1, золотой +3, бомба −5.<br>
-    VR: курок контроллера. ПК: клик мышью.<br>
-    Выстрели в панель «СТАРТ», чтобы начать.
+    Сбивай кристаллы 60 секунд: обычный +1, золотой +3, бомба −5.
+    <div class="row"><b>ПК:</b> WASD — ходьба, мышь — обзор (клик захватывает мышь, Esc — отпустить), Q/E или ←/→ — поворот, клик или Пробел — выстрел.</div>
+    <div class="row"><b>VR:</b> левый стик — ходьба, правый — поворот, курок — выстрел.</div>
+    <div class="row"><b>МК (Arduino):</b> джойстик — ходьба, кнопка — выстрел. Подключи до входа в VR.</div>
+    <div class="row">Выстрели в панель «СТАРТ», чтобы начать.</div>
   </div>
+  <div id="mk">
+    <button id="mk-connect" type="button">🔌 Подключить МК</button>
+    <div id="mk-status">МК не подключён</div>
+  </div>
+  <div id="crosshair"></div>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

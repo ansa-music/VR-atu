@@ -4,10 +4,16 @@ import { buildEnvironment } from './env.js';
 import { sfx } from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
+import { mk } from './mk.js';
 
 const ROUND_TIME = 60;
 const MAX_TARGETS = 14;
 const COLORS = [0x3ec5ff, 0x7c5cff, 0x34e89e, 0xff7ad9];
+const ARENA = 11;        // радиус, по которому может ходить игрок
+const TARGET_BOUND = 12; // границы полёта мишеней
+const WALK_SPEED = 3;    // м/с
+const TURN_SPEED = 2;    // рад/с (клавиши ←/→)
+const EYE_HEIGHT = 1.6;
 
 // ---------- рендер и сцена ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -19,17 +25,27 @@ document.body.appendChild(VRButton.createButton(renderer));
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 200);
-camera.position.set(0, 1.6, 0);
+camera.rotation.order = 'YXZ';
+
+// игрок: камера и контроллеры внутри рига, двигаем риг
+const rig = new THREE.Group();
+rig.add(camera);
+scene.add(rig);
 
 const env = buildEnvironment(scene);
 const fx = createFx(scene);
 
 const board = createScoreboard();
-board.mesh.position.set(0, 3.9, -7);
+board.mesh.position.set(0, 4.2, -7);
 scene.add(board.mesh);
 
+// индикатор МК на табло: зелёный — подключён
+const mkLed = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), new THREE.MeshBasicMaterial({ color: 0x555a66 }));
+mkLed.position.set(1.85, 0.36, 0.02);
+board.mesh.add(mkLed);
+
 const menu = createMenu();
-menu.mesh.position.set(0, 1.6, -3);
+menu.mesh.position.set(0, EYE_HEIGHT, -3);
 menu.mesh.userData.readyAt = 0;
 menu.showStart(ROUND_TIME);
 scene.add(menu.mesh);
@@ -52,6 +68,7 @@ function startGame() {
   clearTargets();
   menu.mesh.visible = false;
   sfx.start();
+  mk.send('S');
 }
 
 function endGame() {
@@ -67,6 +84,23 @@ function endGame() {
   menu.mesh.visible = true;
   menu.mesh.userData.readyAt = performance.now() + 1200; // защита от случайного рестарта
   sfx.end();
+  mk.send('E');
+}
+
+// ---------- взгляд игрока ----------
+const UP = new THREE.Vector3(0, 1, 0);
+const headPos = new THREE.Vector3();
+const fwd = new THREE.Vector3();
+const right = new THREE.Vector3();
+
+// позиция головы и направление взгляда по горизонтали
+function updateHead() {
+  camera.getWorldPosition(headPos);
+  camera.getWorldDirection(fwd);
+  fwd.y = 0;
+  if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
+  fwd.normalize();
+  right.crossVectors(fwd, UP);
 }
 
 // ---------- мишени ----------
@@ -92,10 +126,14 @@ function spawnTarget() {
   const t = new THREE.Mesh(targetGeo, mat);
   if (type === 'bomb') t.add(new THREE.Mesh(ringGeo, ringMat));
 
-  // появление по дуге перед игроком
-  const az = rand.degToRad(rand.randFloatSpread(80));
-  const dist = rand.randFloat(3.5, 8);
-  t.position.set(Math.sin(az) * dist, rand.randFloat(0.8, 3), -Math.cos(az) * dist);
+  // появление по дуге перед игроком, куда бы он ни смотрел
+  const ang = Math.atan2(fwd.x, -fwd.z) + rand.degToRad(rand.randFloatSpread(100));
+  const dist = rand.randFloat(4, 8);
+  t.position.set(
+    rand.clamp(headPos.x + Math.sin(ang) * dist, -TARGET_BOUND, TARGET_BOUND),
+    rand.randFloat(0.8, 3),
+    rand.clamp(headPos.z - Math.cos(ang) * dist, -TARGET_BOUND, TARGET_BOUND),
+  );
   t.scale.setScalar(0.001);
 
   const speed = type === 'gold' ? 1.8 : 1 + elapsed / 60;
@@ -106,7 +144,7 @@ function spawnTarget() {
     age: 0,
     life: type === 'gold' ? 3 : rand.randFloat(4, 6),
     phase: Math.random() * Math.PI * 2,
-    vel: new THREE.Vector3(rand.randFloatSpread(1), rand.randFloatSpread(0.6), rand.randFloatSpread(0.4)).multiplyScalar(speed),
+    vel: new THREE.Vector3(rand.randFloatSpread(1), rand.randFloatSpread(0.6), rand.randFloatSpread(1)).multiplyScalar(speed),
   };
   targets.add(t);
 }
@@ -126,10 +164,10 @@ function updateTargets(dt, time) {
     u.age += dt;
     p.addScaledVector(v, dt);
     p.y += Math.sin(u.age * 2 + u.phase) * 0.003;
-    // отскок от границ игровой зоны
-    if ((p.x < -6 && v.x < 0) || (p.x > 6 && v.x > 0)) v.x *= -1;
+    // отскок от границ арены
+    if ((p.x < -TARGET_BOUND && v.x < 0) || (p.x > TARGET_BOUND && v.x > 0)) v.x *= -1;
     if ((p.y < 0.6 && v.y < 0) || (p.y > 3.3 && v.y > 0)) v.y *= -1;
-    if ((p.z < -9 && v.z < 0) || (p.z > -3 && v.z > 0)) v.z *= -1;
+    if ((p.z < -TARGET_BOUND && v.z < 0) || (p.z > TARGET_BOUND && v.z > 0)) v.z *= -1;
 
     // рост при появлении, сжатие перед исчезновением
     let s = Math.min(1, u.age / 0.25);
@@ -153,6 +191,7 @@ function hitTarget(t, point, controller) {
     fx.popup(point, '−5', '#ff5a6e');
     sfx.bomb();
     vibrate(controller, 1, 250);
+    mk.send('B');
   } else {
     hits++;
     combo++;
@@ -162,6 +201,7 @@ function hitTarget(t, point, controller) {
     fx.popup(point, '+' + pts, u.type === 'gold' ? '#ffd23f' : '#ffffff');
     if (u.type === 'gold') sfx.gold(); else sfx.hit(multiplier());
     vibrate(controller, 0.7, 80);
+    mk.send(u.type === 'gold' ? 'G' : 'H');
   }
   removeTarget(t);
 }
@@ -170,6 +210,7 @@ function hitTarget(t, point, controller) {
 const raycaster = new THREE.Raycaster();
 const tmpMat = new THREE.Matrix4();
 const farPoint = new THREE.Vector3();
+const CENTER = new THREE.Vector2(0, 0);
 
 function shootables() {
   if (state === 'play') return targets.children;
@@ -204,15 +245,66 @@ function setRayFromController(c) {
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpMat);
 }
 
-// ПК: клик мышью
-const ndc = new THREE.Vector2();
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (renderer.xr.isPresenting) return;
-  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+// выстрел из «ружья у бедра» по точке экрана (ПК)
+function fireFromScreen(ndc) {
+  camera.updateMatrixWorld(true);
   raycaster.setFromCamera(ndc, camera);
   const from = new THREE.Vector3(0.25, -0.3, -0.5).applyMatrix4(camera.matrixWorld);
   fire(from, null);
+}
+
+// выстрел кнопкой МК: в VR — из правого контроллера (или взглядом), на ПК — в прицел
+function fireFromAim() {
+  if (renderer.xr.isPresenting) {
+    const c = controllers.find((k) => k.visible && k.userData.src?.handedness === 'right')
+      || controllers.find((k) => k.visible);
+    if (c) {
+      setRayFromController(c);
+      fire(raycaster.ray.origin.clone(), c);
+      return;
+    }
+  }
+  fireFromScreen(CENTER);
+}
+
+// ---------- ПК: мышь и клавиатура ----------
+const canvas = renderer.domElement;
+const keys = new Set();
+let yaw = 0, pitch = 0;
+const ndc = new THREE.Vector2();
+const locked = () => document.pointerLockElement === canvas;
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (renderer.xr.isPresenting) return;
+  if (locked()) {
+    fireFromScreen(CENTER);
+  } else {
+    // без захвата мыши стреляем по курсору и пробуем захватить мышь для обзора
+    ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    fireFromScreen(ndc);
+    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+  }
 });
+
+document.addEventListener('mousemove', (e) => {
+  if (!locked()) return;
+  yaw -= e.movementX * 0.0022;
+  pitch = rand.clamp(pitch - e.movementY * 0.0022, -1.3, 1.3);
+});
+
+document.addEventListener('pointerlockchange', () => {
+  document.body.classList.toggle('locked', locked());
+});
+
+addEventListener('keydown', (e) => {
+  keys.add(e.code);
+  if (e.code === 'Space' && !e.repeat && !renderer.xr.isPresenting) {
+    e.preventDefault();
+    fireFromScreen(CENTER);
+  }
+});
+addEventListener('keyup', (e) => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
 
 // ---------- VR-контроллеры ----------
 function makeGun(color) {
@@ -243,14 +335,15 @@ const controllers = [0, 1].map((i) => {
   const dot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color }));
   dot.visible = false;
   c.add(makeGun(color), laser);
-  c.userData = { color, laser, dot, src: null };
+  c.userData = { color, laser, dot, src: null, turned: false };
   c.addEventListener('connected', (e) => { c.userData.src = e.data; });
   c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
   c.addEventListener('selectstart', () => {
     setRayFromController(c);
     fire(raycaster.ray.origin.clone(), c);
   });
-  scene.add(c, dot);
+  rig.add(c);
+  scene.add(dot);
   return c;
 });
 
@@ -267,11 +360,116 @@ function updateControllers() {
   }
 }
 
+// поворот рига вокруг головы (чтобы не «уносило» в сторону)
+const headBefore = new THREE.Vector3();
+const headAfter = new THREE.Vector3();
+function snapTurn(angle) {
+  camera.getWorldPosition(headBefore);
+  rig.rotation.y += angle;
+  rig.updateMatrixWorld(true);
+  camera.getWorldPosition(headAfter);
+  rig.position.x += headBefore.x - headAfter.x;
+  rig.position.z += headBefore.z - headAfter.z;
+}
+
+// ---------- движение от первого лица ----------
+const move = new THREE.Vector2();
+let walkPhase = 0;
+
+function updateMovement(dt) {
+  move.set(0, 0);
+
+  // клавиатура
+  if (keys.has('KeyW') || keys.has('ArrowUp')) move.y += 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) move.y -= 1;
+  if (keys.has('KeyD')) move.x += 1;
+  if (keys.has('KeyA')) move.x -= 1;
+  if (!renderer.xr.isPresenting) {
+    if (keys.has('ArrowLeft') || keys.has('KeyQ')) yaw += TURN_SPEED * dt;
+    if (keys.has('ArrowRight') || keys.has('KeyE')) yaw -= TURN_SPEED * dt;
+  }
+
+  // джойстик микроконтроллера
+  move.x += mk.x;
+  move.y += mk.y;
+
+  // VR: левый стик — ходьба, правый — поворот рывком на 45°
+  if (renderer.xr.isPresenting) {
+    for (const c of controllers) {
+      const src = c.userData.src;
+      const axes = src?.gamepad?.axes;
+      if (!axes || axes.length < 4) continue;
+      const sx = axes[2], sy = axes[3];
+      if (src.handedness === 'left') {
+        if (Math.abs(sx) > 0.15) move.x += sx;
+        if (Math.abs(sy) > 0.15) move.y -= sy;
+      } else if (src.handedness === 'right') {
+        if (!c.userData.turned && Math.abs(sx) > 0.7) {
+          snapTurn(-Math.sign(sx) * Math.PI / 4);
+          c.userData.turned = true;
+        } else if (Math.abs(sx) < 0.3) {
+          c.userData.turned = false;
+        }
+      }
+    }
+  }
+
+  if (move.lengthSq() > 1) move.normalize();
+  const moving = move.lengthSq() > 0.0001;
+  if (moving) {
+    rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt);
+    rig.position.addScaledVector(right, move.x * WALK_SPEED * dt);
+    const r = Math.hypot(rig.position.x, rig.position.z);
+    if (r > ARENA) rig.position.multiplyScalar(ARENA / r);
+    rig.position.y = 0;
+  }
+
+  // ПК: камера по мыши/клавишам + лёгкое покачивание при ходьбе
+  if (!renderer.xr.isPresenting) {
+    walkPhase = moving ? walkPhase + dt * 9 * Math.sqrt(move.lengthSq()) : 0;
+    camera.position.set(0, EYE_HEIGHT + Math.sin(walkPhase) * 0.035, 0);
+    camera.rotation.set(pitch, yaw, 0);
+  }
+}
+
+// табло и меню плавно держатся перед игроком
+const goal = new THREE.Vector3();
+function follow(obj, dist, height, speed, dt) {
+  goal.set(headPos.x + fwd.x * dist, height, headPos.z + fwd.z * dist);
+  obj.position.lerp(goal, 1 - Math.exp(-speed * dt));
+  obj.lookAt(headPos.x, obj.position.y, headPos.z);
+}
+
+// после выхода из VR возвращаем камеру в «рост»
+renderer.xr.addEventListener('sessionend', () => {
+  camera.position.set(0, EYE_HEIGHT, 0);
+});
+
+// ---------- МК ----------
+const mkStatus = document.getElementById('mk-status');
+const mkButton = document.getElementById('mk-connect');
+mk.onStatus = (text, connected) => {
+  if (mkStatus) mkStatus.textContent = text;
+  if (mkButton) mkButton.textContent = connected ? 'Отключить МК' : '🔌 Подключить МК';
+  mkLed.material.color.setHex(connected ? 0x34e89e : 0x555a66);
+};
+mk.onButtonDown = () => fireFromAim();
+mkButton?.addEventListener('click', () => {
+  mkButton.blur(); // чтобы Пробел не нажимал кнопку повторно
+  if (mk.connected) mk.disconnect(); else mk.connect();
+});
+if (!mk.supported && mkStatus) mkStatus.textContent = 'Web Serial недоступен: нужен Chrome или Edge на ПК';
+mk.autoConnect();
+
 // ---------- игровой цикл ----------
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
+
+  updateHead();
+  updateMovement(dt);
+  updateHead();
 
   if (state === 'play') {
     timeLeft -= dt;
@@ -288,7 +486,9 @@ renderer.setAnimationLoop(() => {
   fx.update(dt);
   env.update(dt, time);
   updateControllers();
-  menu.mesh.position.y = 1.6 + Math.sin(time * 1.5) * 0.03;
+
+  follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
+  if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
   board.update({ score, timeLeft, multiplier: multiplier() });
 
   renderer.render(scene, camera);
