@@ -5,6 +5,7 @@ on:
     branches: [feature/multiplayer-v0-1]
     paths:
       - 'server/**'
+      - 'js/**'
       - '.github/workflows/multiplayer-tests.yml'
   pull_request:
     paths:
@@ -26,3 +27,7 @@ jobs:
       - run: npm test
       - run: node --check index.js
       - run: node --check rooms.js
+      - run: node --check ../js/main.js
+      - run: node --check ../js/combat.js
+      - run: node --check ../js/weapon.js
+      - run: node --check ../js/character.js
