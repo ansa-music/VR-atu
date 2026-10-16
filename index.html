@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#070b1a">
-  <meta name="atu-build" content="atu-netplay-20261016b">
+  <meta name="atu-build" content="atu-netplay-20261016c">
   <meta name="color-scheme" content="dark">
   <title>ATU — VR Тир</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -380,11 +380,11 @@
         <div id="mp-lobby" hidden>
           <div class="mp-lobby-head"><strong id="mp-room-title">Комната ATU</strong><span id="mp-room-info"></span></div>
           <div class="mp-code-line"><span>Код приглашения</span><strong id="mp-code">—</strong><button type="button" id="mp-copy-code">Копировать код</button></div>
+          <button type="button" id="mp-start" class="mp-primary" hidden>▶ Начать матч</button>
+          <p id="mp-guest-hint" hidden>Ожидаем начала матча…</p>
+          <button type="button" id="mp-resume" hidden>Вернуться в матч</button>
           <div id="mp-players" aria-live="polite"></div>
           <div id="mp-ranking" aria-live="polite"></div>
-          <p id="mp-guest-hint" hidden>Ожидаем начала матча…</p>
-          <button type="button" id="mp-start" class="mp-primary" hidden>▶ Начать матч</button>
-          <button type="button" id="mp-resume" hidden>Вернуться в матч</button>
           <button type="button" id="mp-leave">Выйти из комнаты</button>
         </div>
         <p id="mp-status" role="status">Сервер подключён автоматически.</p>
@@ -406,9 +406,9 @@
     ЛКМ — огонь · ПКМ — прицел · R — перезарядка · Space — прыжок · C — приседание
   </aside>
 
-  <script type="module" src="js/overlay.js?v=atu-netplay-20261016b"></script>
-  <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016b"></script>
-  <script type="module" src="js/main.js?v=atu-netplay-20261016b"></script>
-  <script type="module" src="js/multiplayer-ui.js?v=atu-netplay-20261016b"></script>
+  <script type="module" src="js/overlay.js?v=atu-netplay-20261016c"></script>
+  <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016c"></script>
+  <script type="module" src="js/main.js?v=atu-netplay-20261016c"></script>
+  <script type="module" src="js/multiplayer-ui.js?v=atu-netplay-20261016c"></script>
 </body>
 </html>
