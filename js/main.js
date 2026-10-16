@@ -673,7 +673,7 @@ function tryShoot(first, source) {
     });
   }
   if (shot.round) shots++;
-  if (sharedArena.playing) sharedArena.fire(shotOrigin, shotDir); // в сети попадание считает сервер
+  if (sharedArena.playing) sharedArena.fire(shotOrigin, shotDir, d.id); // урон и темп оружия проверяются на сервере
 
   currentGun(controller)?.fire?.();
   sound('gunshot', d.id);
