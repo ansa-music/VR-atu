@@ -43,6 +43,7 @@ export function initializeMultiplayerPresence(scene, camera) {
     client?.disconnect();
     clear();
     client = new MultiplayerClient(url);
+    window.dispatchEvent(new CustomEvent('mp:transport', { detail: { send: (type, data) => client.send(type, data) } }));
     client.addEventListener('room:joined', roomUpdate);
     client.addEventListener('room:update', roomUpdate);
     client.addEventListener('room:left', clear);
@@ -56,7 +57,7 @@ export function initializeMultiplayerPresence(scene, camera) {
       avatar.lastSeen = performance.now();
     });
     const relay = type => client.addEventListener(type, e => window.dispatchEvent(new CustomEvent('mp:' + type, { detail: e.detail })));
-    ['room:joined', 'room:update', 'room:left', 'error', 'status'].forEach(relay);
+    ['room:joined', 'room:update', 'room:left', 'targets:update', 'shot:result', 'error', 'status'].forEach(relay);
     try {
       await client.connect();
       if (action === 'create') client.createRoom(name);
