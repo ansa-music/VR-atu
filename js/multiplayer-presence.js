@@ -48,7 +48,7 @@ export function initializeMultiplayerPresence(scene, camera) {
   }
 
   window.addEventListener('mp:configure', async (event) => {
-    const { url, action, code, name } = event.detail || {};
+    const { url, action, code, name, options } = event.detail || {};
     if (typeof url !== 'string' || !/^wss?:\/\//i.test(url)) return;
     client?.disconnect();
     clear();
@@ -73,7 +73,7 @@ export function initializeMultiplayerPresence(scene, camera) {
     ['room:joined', 'room:update', 'room:left', 'targets:update', 'shot:result', 'error', 'status'].forEach(relay);
     try {
       await client.connect();
-      if (action === 'create') client.createRoom(name);
+      if (action === 'create') client.createRoom(name, options);
       else client.joinRoom(code, name);
     } catch (error) {
       window.dispatchEvent(new CustomEvent('mp:error', { detail: { code: 'CONNECTION_FAILED' } }));
