@@ -7,6 +7,7 @@ import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
 import { initializeMultiplayerPresence } from './multiplayer-presence.js';
 import { createSharedArena } from './multiplayer-arena.js';
+import { CombatController, shotSpread } from './combat.js';
 import { tintWeapon, tintCharacter, skinId } from './skins.js';
 
 const { sfx } = audio;
@@ -45,6 +46,16 @@ rig.add(camera);
 scene.add(rig);
 const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
 const sharedArena = createSharedArena(scene);
+const combat = new CombatController();
+let isAiming = false, isCrouching = false, jumpHeight = 0, jumpVelocity = 0, recoilKick = 0;
+let jumpRequested = false;
+const GRAVITY = 9.8, JUMP_SPEED = 4.5;
+const combatHud = document.createElement('div');
+combatHud.id = 'combat-hud';
+combatHud.setAttribute('aria-live', 'off');
+combatHud.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:8;background:rgba(7,11,26,.78);border:1px solid #3ec5ff88;padding:12px 18px;border-radius:12px;color:white;font:700 16px system-ui;pointer-events:none';
+combatHud.textContent = '24 / 144';
+document.body.appendChild(combatHud);
 
 const env = buildEnvironment(scene);
 const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
@@ -314,6 +325,22 @@ function shootables() {
 
 // луч уже выставлен в raycaster
 function fire(from, controller) {
+  // Menus are free to interact with; ammunition applies only to active rounds.
+  const fighting = sharedArena.active ? sharedArena.playing : state === 'play';
+  if (sharedArena.active && !sharedArena.playing) return;
+  if (fighting) {
+    const result = combat.fire();
+    if (!result.ok) {
+      if (result.reason === 'empty') combat.reload();
+      return;
+    }
+    recoilKick = Math.min(0.16, recoilKick + (isAiming ? 0.016 : 0.038));
+    const [sx, sy] = shotSpread({ aiming: isAiming, moving: isMoving, jumping: jumpHeight > 0.02, crouching: isCrouching, shotIndex: combat.shotIndex });
+    const direction = raycaster.ray.direction;
+    direction.x += sx;
+    direction.y += sy;
+    direction.normalize();
+  }
   const hit = raycaster.intersectObjects(shootables(), false)[0];
   const end = hit ? hit.point : raycaster.ray.at(15, farPoint);
   const color = controller ? controller.userData.color : 0xffffff;
@@ -393,7 +420,7 @@ const ndc = new THREE.Vector2();
 const locked = () => document.pointerLockElement === canvas;
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (renderer.xr.isPresenting) return;
+  if (renderer.xr.isPresenting || e.button !== 0) return;
   if (locked()) {
     fireFromScreen(CENTER);
   } else {
@@ -417,9 +444,10 @@ document.addEventListener('pointerlockchange', () => {
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space' && !e.repeat && !renderer.xr.isPresenting) {
-    e.preventDefault();
-    fireFromScreen(CENTER);
+    e.preventDefault(); jumpRequested = true;
   }
+  if (e.code === 'KeyR' && !e.repeat) combat.reload();
+  if (e.code === 'ControlLeft' || e.code === 'KeyC') isCrouching = true;
   if (e.code === 'Enter' && !e.repeat && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 
@@ -430,8 +458,11 @@ addEventListener('game:start', () => {
   }
   if (!sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
+addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'ControlLeft' || e.code === 'KeyC') isCrouching = false; });
+addEventListener('blur', () => { keys.clear(); isAiming = false; isCrouching = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => { if (e.button === 2 && !renderer.xr.isPresenting) isAiming = true; });
+addEventListener('pointerup', e => { if (e.button === 2) isAiming = false; });
 
 // ---------- VR-контроллеры ----------
 function makeGun(color) {
@@ -583,18 +614,24 @@ function updateMovement(dt) {
   const moving = move.lengthSq() > 0.0001;
   isMoving = moving;
   if (moving) {
-    rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt);
-    rig.position.addScaledVector(right, move.x * WALK_SPEED * dt);
+    rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
+    rig.position.addScaledVector(right, move.x * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
     const r = Math.hypot(rig.position.x, rig.position.z);
     if (r > ARENA) rig.position.multiplyScalar(ARENA / r);
     rig.position.y = 0;
   }
 
+  if (jumpRequested && jumpHeight <= 0 && !renderer.xr.isPresenting) jumpVelocity = JUMP_SPEED;
+  jumpRequested = false;
+  if (!renderer.xr.isPresenting) {
+    jumpHeight = Math.max(0, jumpHeight + jumpVelocity * dt);
+    jumpVelocity = jumpHeight > 0 ? jumpVelocity - GRAVITY * dt : 0;
+  }
   // ПК: камера по мыши/клавишам + лёгкое покачивание при ходьбе
   if (!renderer.xr.isPresenting) {
     walkPhase = moving ? walkPhase + dt * 9 * Math.sqrt(move.lengthSq()) : 0;
-    camera.position.set(0, EYE_HEIGHT + Math.sin(walkPhase) * 0.035, 0);
-    camera.rotation.set(pitch, yaw, 0);
+    camera.position.set(0, EYE_HEIGHT + jumpHeight - (isCrouching ? 0.48 : 0) + Math.sin(walkPhase) * 0.035, 0);
+    camera.rotation.set(pitch - recoilKick, yaw, 0);
   }
 }
 
@@ -644,6 +681,15 @@ renderer.setAnimationLoop(() => {
   updateHead();
   updateMultiplayerPresence(performance.now(), dt);
   sharedArena.update(dt);
+  combat.update(dt);
+  recoilKick = Math.max(0, recoilKick - dt * 0.55);
+  if (!renderer.xr.isPresenting) {
+    const targetFov = isAiming ? 51 : 70;
+    const nextFov = THREE.MathUtils.lerp(camera.fov, targetFov, Math.min(1, dt * 13));
+    if (Math.abs(camera.fov - nextFov) > 0.001) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
+  }
+  const ammo = combat.status;
+  combatHud.textContent = ammo.reloading ? 'ПЕРЕЗАРЯДКА…' : String(ammo.ammo).padStart(2, '0') + ' / ' + ammo.reserve + (isAiming ? '  ● ADS' : '') + (isCrouching ? '  ↓' : '') + (jumpHeight > 0.02 ? '  ↑' : '');
 
   if (state === 'countdown') updateCountdown(dt);
 
