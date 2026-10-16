@@ -2,7 +2,7 @@ name: Multiplayer foundation tests
 
 on:
   push:
-    branches: [feature/multiplayer-v0-1]
+    branches: [main, feature/multiplayer-v0-1]
     paths:
       - 'server/**'
       - 'js/**'
