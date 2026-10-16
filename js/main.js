@@ -6,6 +6,7 @@ import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
 import { initializeMultiplayerPresence } from './multiplayer-presence.js';
+import { createSharedArena } from './multiplayer-arena.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -42,6 +43,7 @@ const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
 const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
+const sharedArena = createSharedArena(scene);
 
 const env = buildEnvironment(scene);
 const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
@@ -286,6 +288,7 @@ const CENTER = new THREE.Vector2(0, 0);
 const BANNER_OFFSET = new THREE.Vector3(0, 0.6, 0);
 
 function shootables() {
+  if (sharedArena.active) return [];
   if (state === 'play') return targets.children;
   if (state === 'countdown') return [];
   return menu.mesh.visible ? [menu.mesh] : [];
@@ -301,6 +304,13 @@ function fire(from, controller) {
   sfx.shot();
   vibrate(controller, 0.3, 40);
 
+  if (sharedArena.active) {
+    if (sharedArena.playing) {
+      // Server decides whether ray intersects a shared target and awards points.
+      sharedArena.fire(raycaster.ray.origin, raycaster.ray.direction);
+    }
+    return;
+  }
   if (state !== 'play') {
     if (hit && performance.now() >= menu.mesh.userData.readyAt) startGame();
     return;
@@ -392,7 +402,7 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     fireFromScreen(CENTER);
   }
-  if (e.code === 'Enter' && !e.repeat && (state === 'menu' || state === 'over')) startGame();
+  if (e.code === 'Enter' && !e.repeat && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 
 // кнопка «Играть» на стартовом экране (клик пользователя — можно захватить мышь)
@@ -400,7 +410,7 @@ addEventListener('game:start', () => {
   if (!renderer.xr.isPresenting) {
     try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
   }
-  if (state === 'menu' || state === 'over') startGame();
+  if (!sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -604,6 +614,7 @@ renderer.setAnimationLoop(() => {
   updateMovement(dt);
   updateHead();
   updateMultiplayerPresence(performance.now(), dt);
+  sharedArena.update(dt);
 
   if (state === 'countdown') updateCountdown(dt);
 
