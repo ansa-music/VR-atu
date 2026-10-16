@@ -6,12 +6,21 @@ const BODY_RADIUS = 0.40;
 const DAMAGE_HEAD = 67;
 const DAMAGE_BODY = 34;
 
+function shuffledSlots() {
+  const list = [0,1,2,3,4,5];
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+}
+
 export function startPvp(room, now) {
-  let indexAlpha = 0, indexBravo = 0;
+  const slots = { alpha: shuffledSlots(), bravo: shuffledSlots() };
   for (const player of room.players.values()) {
-    // Each round shuffles a player's spawn from their OWN team's zone.
-    const nth = player.team === 'bravo' ? indexBravo++ : indexAlpha++;
-    respawn(player, now, nth);
+    const team = player.team === 'bravo' ? 'bravo' : 'alpha';
+    // Teammates use DISTINCT randomly shuffled spawn pads on initial round start.
+    respawn(player, now, slots[team].shift());
     player.kills = 0;
     player.deaths = 0;
     player.score = 0;
@@ -19,12 +28,11 @@ export function startPvp(room, now) {
     player.hits = 0;
   }
 }
-export function respawn(player, now, offset = 0) {
+export function respawn(player, now, selectedSlot = null) {
   const team = player.team === 'bravo' ? 'bravo' : 'alpha';
-  // Spread players over shuffled zone slots without forcing a fixed start point.
-  const positions = team === 'alpha' ? 6 : 6;
-  const randomPick = Math.floor(Math.random() * positions);
-  const slot = (randomPick + offset) % positions;
+  const positions = 6;
+  // Individual respawns are random; round starts spread teammates apart.
+  const slot = Number.isInteger(selectedSlot) ? selectedSlot : Math.floor(Math.random() * positions);
   const spawn = chooseSpawn(team, () => (slot + .25) / positions);
   player.spawn = spawn;
   player.spawnSeq = (player.spawnSeq || 0) + 1;
