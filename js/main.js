@@ -5,10 +5,10 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-bastion-v2';
-import { createSharedArena } from './multiplayer-arena.js?v=atu-bastion-v2';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-pvp-v3';
+import { createSharedArena } from './multiplayer-arena.js?v=atu-pvp-v3';
 import { createPvpMap } from './pvp-map.js';
-import { slideMovement } from './pvp-layout.js?v=atu-bastion-v2';
+import { slideMovement } from './pvp-layout.js?v=atu-pvp-v3';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 
