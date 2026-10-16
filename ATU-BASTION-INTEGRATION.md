@@ -65,7 +65,7 @@ shield expiry and shooting players behind cover with two connected clients.
 
 ## Integration follow-up after syncing the parallel session
 
-The support branch includes the PvP integration through `92bad21`. All 41 tests
+The support branch includes the PvP integration through `92bad21`. All 42 tests
 pass, including four added PvP tests: spawn shield expiry, cover occlusion,
 kill/death/respawn accounting and friendly-fire/dead-shooter rejection. Existing
 classic target-network tests now request `mode: 'targets'` explicitly because
@@ -87,3 +87,7 @@ Remaining integration points for the map/session owner:
 These are handoff findings rather than unverified fixes to the parallel
 session's implementation. No map visuals, teams, hit damage, timing or player
 controller code were changed by this support patch.
+
+The container packaging added a server-local mirror at `server/pvp-layout.js`.
+Both copies now include the collision fixes. An exact-source equality test
+fails if the browser and packaged server diverge; update both together.

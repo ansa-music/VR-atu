@@ -95,3 +95,9 @@ test('perimeter and malformed rays cannot bypass occlusion', () => {
   assert.equal(walkable(ARENA_HALF_X,0), false);
   assert.equal(walkable(0,ARENA_HALF_Z), false);
 });
+
+
+test('Docker server geometry matches the browser layout exactly', async () => {
+  const serverSource = await readFile(new URL('./pvp-layout.js', import.meta.url), 'utf8');
+  assert.equal(serverSource, source, 'Update both layout copies so clients and the packaged server use identical collision geometry');
+});

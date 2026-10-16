@@ -38,7 +38,7 @@ export const OBSTACLES = Object.freeze([
 // Low obstacles are solid horizontally, regardless of player standing/crouching mode.
 // Geometry controls both walking and line of sight.
 export function walkable(x, z, radius = PLAYER_RADIUS) {
-  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+  if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(radius) || radius < 0) return false;
   if (Math.abs(x) + radius > ARENA_HALF_X || Math.abs(z) + radius > ARENA_HALF_Z) return false;
   return !OBSTACLES.some(b =>
     Math.abs(x - b.x) < b.w / 2 + radius && Math.abs(z - b.z) < b.d / 2 + radius
@@ -47,13 +47,38 @@ export function walkable(x, z, radius = PLAYER_RADIUS) {
 
 // Wall sliding on the X and Z axes is comfortable and deterministic in VR.
 export function slideMovement(x, z, nx, nz) {
-  if (walkable(nx, nz)) return [nx, nz];
-  if (walkable(nx, z)) return [nx, z];
-  if (walkable(x, nz)) return [x, nz];
+  if (![x, z, nx, nz].every(Number.isFinite) || !walkable(x, z)) return [x, z];
+  // Bound the work even for an oversized network/frame delta. Spawn/teleport
+  // placement is separate; this function only advances an already valid player.
+  nx = Math.max(-ARENA_HALF_X + PLAYER_RADIUS, Math.min(ARENA_HALF_X - PLAYER_RADIUS, nx));
+  nz = Math.max(-ARENA_HALF_Z + PLAYER_RADIUS, Math.min(ARENA_HALF_Z - PLAYER_RADIUS, nz));
+  const steps = Math.max(1, Math.ceil(Math.hypot(nx - x, nz - z) / (PLAYER_RADIUS / 2)));
+  const dx = (nx - x) / steps, dz = (nz - z) / steps;
+  // Small bounded steps cannot skip the expanded footprint of a wall. Normal
+  // frame movement takes one step, with at most ~220 for a full-map request.
+  for (let i = 0; i < steps; i++) {
+    const tx = x + dx, tz = z + dz;
+    if (walkable(tx, tz)) { x = tx; z = tz; }
+    else if (walkable(tx, z)) x = tx;
+    else if (walkable(x, tz)) z = tz;
+    else break;
+  }
   return [x, z];
 }
 
 export function segmentHitsObstacle(origin, dir, maxDistance) {
+  // Invalid network rays are blocked. maxDistance is a physical distance in
+  // metres, so direction magnitude must not change which cover stops the shot.
+  const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+  if (!vector(origin) || !vector(dir) || !Number.isFinite(maxDistance) || maxDistance < 0) return true;
+  const length = Math.hypot(...dir);
+  if (!Number.isFinite(length) || length === 0) return true;
+  dir = dir.map(v => v / length);
+  // The perimeter is closed; shots originating outside cannot enter either.
+  const endX = origin[0] + dir[0] * maxDistance;
+  const endZ = origin[2] + dir[2] * maxDistance;
+  if (Math.abs(origin[0]) >= ARENA_HALF_X || Math.abs(origin[2]) >= ARENA_HALF_Z ||
+      Math.abs(endX) >= ARENA_HALF_X || Math.abs(endZ) >= ARENA_HALF_Z) return true;
   for (const b of OBSTACLES) {
     let entry = 0, exit = maxDistance;
     const lo = [b.x - b.w / 2, 0, b.z - b.d / 2];
@@ -71,7 +96,6 @@ export function segmentHitsObstacle(origin, dir, maxDistance) {
     }
     if (exit >= entry) return true;
   }
-  // Outer perimeter: stop any hits that would leave the arena.
   return false;
 }
 
