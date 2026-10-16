@@ -7,6 +7,8 @@ import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
 import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-mpnav-20261016d';
 import { createSharedArena } from './multiplayer-arena.js';
+import { createPvpMap } from './pvp-map.js';
+import { slideMovement } from './pvp-layout.js';
 import { CombatController, shotSpread } from './combat.js';
 import { tintWeapon, tintCharacter, skinId } from './skins.js';
 
@@ -57,7 +59,45 @@ combatHud.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:8;backg
 combatHud.textContent = '24 / 144';
 document.body.appendChild(combatHud);
 
+const envBefore = new Set(scene.children);
 const env = buildEnvironment(scene);
+const soloEnvironment = scene.children.filter(obj => !envBefore.has(obj) && !obj.isLight);
+const pvpMap = createPvpMap(scene);
+let pvpEnabled = false;
+let lastMySpawnSeq = 0;
+const pvpPos = new THREE.Vector3();
+function updatePvpWorld(room) {
+  pvpEnabled = !!room && room.mode === 'pvp';
+  pvpMap.setVisible(pvpEnabled);
+  for (const obj of soloEnvironment) obj.visible = !pvpEnabled;
+  if (!pvpEnabled) { lastMySpawnSeq = 0; return; }
+  if (!room.players || room.phase !== 'playing') return;
+  const myPlayer = room.players.find(p => p.id === multiplayerPlayerId);
+  if (myPlayer?.spawn && myPlayer.spawnSeq !== lastMySpawnSeq) {
+    lastMySpawnSeq = myPlayer.spawnSeq;
+    // Recenter the tracked headset position without moving a VR player physically.
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(pvpPos);
+    rig.position.x += myPlayer.spawn[0] - pvpPos.x;
+    rig.position.z += myPlayer.spawn[2] - pvpPos.z;
+    if (!renderer.xr.isPresenting) {
+      yaw = myPlayer.team === 'bravo' ? Math.PI : 0;
+      pitch = 0;
+      rig.rotation.y = 0;
+    }
+    jumpHeight = jumpVelocity = recoilKick = 0;
+  }
+}
+let multiplayerPlayerId = null;
+addEventListener('mp:room:joined', e => {
+  multiplayerPlayerId = e.detail?.playerId;
+  updatePvpWorld(e.detail?.room);
+});
+addEventListener('mp:room:update', e => updatePvpWorld(e.detail?.room));
+addEventListener('mp:room:left', () => { multiplayerPlayerId=null; updatePvpWorld(null); });
+addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected') { multiplayerPlayerId=null; updatePvpWorld(null); }
+});
 const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
 
 // тень игрока на полу
@@ -368,7 +408,7 @@ function shootables() {
 function fire(from, controller) {
   // Menus are free to interact with; ammunition applies only to active rounds.
   const fighting = sharedArena.active ? sharedArena.playing : state === 'play';
-  if (sharedArena.active && !sharedArena.playing) return;
+  if (sharedArena.active && (!sharedArena.playing || !sharedArena.alive)) return;
   if (fighting) {
     const result = combat.fire();
     if (!result.ok) {
@@ -690,9 +730,18 @@ function updateMovement(dt) {
   if (moving) {
     rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
     rig.position.addScaledVector(right, move.x * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
-    const r = Math.hypot(rig.position.x, rig.position.z);
-    if (r > ARENA) rig.position.multiplyScalar(ARENA / r);
+    if (!pvpEnabled) {
+      const r = Math.hypot(rig.position.x, rig.position.z);
+      if (r > ARENA) rig.position.multiplyScalar(ARENA / r);
+    }
     rig.position.y = 0;
+  }
+  if (pvpEnabled && sharedArena.playing) {
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(pvpPos);
+    const [newX, newZ] = slideMovement(headPos.x, headPos.z, pvpPos.x, pvpPos.z);
+    rig.position.x += newX - pvpPos.x;
+    rig.position.z += newZ - pvpPos.z;
   }
 
   if (jumpRequested && jumpHeight <= 0 && !renderer.xr.isPresenting) jumpVelocity = JUMP_SPEED;
@@ -763,7 +812,10 @@ renderer.setAnimationLoop(() => {
     if (Math.abs(camera.fov - nextFov) > 0.001) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
   }
   const ammo = combat.status;
-  combatHud.textContent = ammo.reloading ? 'ПЕРЕЗАРЯДКА…' : String(ammo.ammo).padStart(2, '0') + ' / ' + ammo.reserve + (isAiming ? '  ● ADS' : '') + (isCrouching ? '  ↓' : '') + (jumpHeight > 0.02 ? '  ↑' : '');
+  const ammoLabel = ammo.reloading ? 'ПЕРЕЗАРЯДКА…' : String(ammo.ammo).padStart(2, '0') + ' / ' + ammo.reserve;
+  combatHud.textContent = pvpEnabled && sharedArena.playing
+    ? (sharedArena.alive ? '♥ ' + sharedArena.health + ' HP · ' + ammoLabel + ' · Убийства: ' + sharedArena.kills
+      : 'ВОЗРОЖДЕНИЕ…') : ammoLabel + (isAiming ? '  ● ADS' : '') + (isCrouching ? '  ↓' : '') + (jumpHeight > 0.02 ? '  ↑' : '');
 
   if (state === 'countdown') updateCountdown(dt);
 

@@ -367,6 +367,12 @@
             <input id="mp-title" maxlength="20" placeholder="Например, Турнир друзей" value="Комната ATU">
             <label class="mp-label" for="mp-custom-code">Код комнаты (по желанию)</label>
             <input id="mp-custom-code" type="text" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="Например, 123">
+            <label class="mp-label" for="mp-game-mode">Режим игры</label>
+            <select id="mp-game-mode" aria-label="Режим игры">
+              <option value="pvp" selected>ATU BASTION — против игроков (PvP)</option>
+              <option value="targets">Классический тир — общие мишени</option>
+            </select>
+            <p class="mp-muted" style="margin:6px 0 10px">PvP: две команды, защищённые зоны появления, укрытия, возрождение и счёт убийств.</p>
             <div class="mp-settings">
               <div><label class="mp-label" for="mp-max-players">Количество игроков</label>
                 <select id="mp-max-players"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option></select>
@@ -418,9 +424,9 @@
     ЛКМ — огонь (также с зажатой ПКМ) · ПКМ — прицел · Tab / Esc — курсор и меню · R — перезарядка · Space — прыжок · C — приседание
   </aside>
 
-  <script type="module" src="js/overlay.js?v=atu-mousefix-20261016e"></script>
+  <script type="module" src="js/overlay.js?v=atu-bastion-v1"></script>
   <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016c"></script>
-  <script type="module" src="js/main.js?v=atu-aimfirst-20261016f"></script>
-  <script type="module" src="js/multiplayer-ui.js?v=atu-mpnav-20261016d"></script>
+  <script type="module" src="js/main.js?v=atu-bastion-v1"></script>
+  <script type="module" src="js/multiplayer-ui.js?v=atu-bastion-v1"></script>
 </body>
 </html>
