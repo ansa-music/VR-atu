@@ -26,7 +26,7 @@ async function loadUI({legacy = false} = {}) {
   globalThis.window = new EventTarget();
   window.setTimeout = () => 0; // Do not wait 18 seconds for UI pending state.
   globalThis.location = {protocol: 'https:'};
-  globalThis.navigator = {clipboard: {writeText: async () => {}}};
+  Object.defineProperty(globalThis, 'navigator', {value: {clipboard: {writeText: async () => {}}}, configurable: true});
   globalThis.CustomEvent ??= class extends Event {constructor(name,{detail}={}) {super(name);this.detail=detail;}};
   items.get('mp-name').value='Тест';
   if (!legacy) {
