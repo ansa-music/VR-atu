@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: vr-atu-multiplayer
+    runtime: docker
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: https://ansa-music.github.io
