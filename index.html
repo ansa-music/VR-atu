@@ -228,6 +228,15 @@
       .ov-inner, #play, .ov-title .t-tir { animation: none; }
       #overlay, #overlay.is-hidden { transition: none; }
     }
+
+    /* Multiplayer lobby beta: optional, does not change solo flow. */
+    #mp-section { max-width: 680px; margin: 18px auto 0; padding: 18px; border: 1px solid rgba(62,197,255,.35); border-radius: 18px; background: rgba(8,12,35,.82); text-align: left; }
+    #mp-section h2 { margin: 0 0 10px; font-size: 18px; color: #9fe7ff; }
+    #mp-section input { width: 100%; padding: 10px 12px; margin: 5px 0; border-radius: 9px; border: 1px solid #566299; background: #101832; color: #fff; font: inherit; }
+    #mp-section button { margin: 5px; padding: 10px 15px; border-radius: 10px; border: 1px solid #3ec5ff; background: #283c71; color: #fff; cursor: pointer; }
+    #mp-section button:disabled { opacity: .5; cursor: default; }
+    #mp-status { color: #c9d6ff; font-size: 13px; min-height: 1em; }
+    #mp-code { font-size: 20px; letter-spacing: 3px; color: #34e89e; }
   </style>
   <script type="importmap">
     {
@@ -290,6 +299,23 @@
       <p class="rules">
         <b class="r-t">60 секунд</b> · <b class="r-c">кристалл +1</b> · <b class="r-g">золотой +3</b> · <b class="r-p">бомба −5</b> · <b class="r-m">серия из 5 попаданий = множитель до x4</b>
       </p>
+
+      <section id="mp-section" aria-label="Мультиплеер, экспериментальная версия">
+        <h2>МУЛЬТИПЛЕЕР · BETA</h2>
+        <p style="font-size:13px;color:#a9b6e6">Пока доступны комнаты, совместное присутствие и отображение игроков. Общие мишени и очки ещё разрабатываются. Нужен отдельный WebSocket-сервер.</p>
+        <div id="mp-panel">
+          <input id="mp-server" type="url" placeholder="wss://адрес-вашего-сервера" aria-label="Адрес сервера" autocomplete="off">
+          <input id="mp-name" maxlength="20" placeholder="Имя игрока" aria-label="Имя игрока">
+          <input id="mp-join-code" maxlength="6" placeholder="Код комнаты" aria-label="Код комнаты">
+          <button type="button" id="mp-create">Создать комнату</button>
+          <button type="button" id="mp-join">Войти по коду</button>
+        </div>
+        <div>Код: <strong id="mp-code">—</strong></div>
+        <div id="mp-players" aria-live="polite"></div>
+        <button type="button" id="mp-start" hidden>Запустить сетевой таймер</button>
+        <button type="button" id="mp-leave">Покинуть комнату</button>
+        <p id="mp-status" role="status">Для мультиплеера требуется запущенный сервер.</p>
+      </section>
       <p class="ov-foot">Кнопка «?» в левом верхнем углу вернёт эту справку.</p>
     </div>
   </div>
@@ -305,5 +331,6 @@
 
   <script type="module" src="js/overlay.js"></script>
   <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/multiplayer-ui.js"></script>
 </body>
 </html>
