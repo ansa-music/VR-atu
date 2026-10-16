@@ -67,6 +67,23 @@ menu.mesh.position.set(0, EYE_HEIGHT, -3);
 menu.mesh.userData.readyAt = 0;
 menu.showStart(ROUND_TIME);
 scene.add(menu.mesh);
+// The solo VR panel must not obscure the multiplayer targets.
+addEventListener('mp:room:update', e => {
+  if (e.detail?.room?.phase === 'playing') menu.mesh.visible = false;
+});
+addEventListener('mp:room:joined', e => {
+  if (e.detail?.room?.phase === 'playing') menu.mesh.visible = false;
+});
+const restoreSoloMenu = () => {
+  if (state === 'menu' || state === 'over') {
+    menu.showStart(ROUND_TIME);
+    menu.mesh.visible = true;
+  }
+};
+addEventListener('mp:room:left', restoreSoloMenu);
+addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected') restoreSoloMenu();
+});
 
 // ---------- состояние игры ----------
 let state = 'menu'; // menu | countdown | play | over
