@@ -86,6 +86,14 @@ export function createSharedArena(scene) {
     get isPvp() { return active && mode === 'pvp'; },
     get health() { return me?.health ?? 100; },
     get kills() { return me?.kills || 0; },
+    get respawnSeconds() {
+      return active && mode === 'pvp' && me?.alive === false && me?.respawnAt
+        ? Math.max(0, (me.respawnAt - Date.now() - serverOffset) / 1000) : 0;
+    },
+    get shieldSeconds() {
+      return active && mode === 'pvp' && me?.alive === true && me?.invulnerableUntil
+        ? Math.max(0, (me.invulnerableUntil - Date.now() - serverOffset) / 1000) : 0;
+    },
     get alive() { return !active || mode !== 'pvp' || !!me?.alive; },
     get team() { return me?.team || 'alpha'; },
     get playing() { return active && phase === 'playing'; },
