@@ -511,6 +511,8 @@ const controllers = [0, 1].map((i) => {
   });
   c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
   c.addEventListener('selectstart', () => fireFromController(c));
+  c.addEventListener('squeezestart', () => { if (c.userData.src?.handedness === 'left') combat.reload(); else isAiming = true; });
+  c.addEventListener('squeezeend', () => { isAiming = false; });
   rig.add(c);
   scene.add(dot);
   return c;
@@ -734,8 +736,8 @@ emit('game:state', { state });
 const wristInfo = { score: 0, timeLeft: 0, multiplier: 1, mk: false };
 function updateCharacter(dt) {
   if (viewModel.visible) vmWeapon?.update?.(dt, { moving: isMoving });
-  wristInfo.score = score;
-  wristInfo.timeLeft = timeLeft;
+  wristInfo.score = sharedArena.active ? sharedArena.score : score;
+  wristInfo.timeLeft = sharedArena.active ? sharedArena.timeLeft : timeLeft;
   wristInfo.multiplier = multiplier();
   wristInfo.mk = mk.connected;
   for (const c of controllers) {
