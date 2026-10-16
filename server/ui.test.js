@@ -17,15 +17,16 @@ function fakeElement(id) {
     focus() { this.focused = true; },
   };
 }
-async function loadUI({legacy = false} = {}) {
+async function loadUI({legacy = false, hostname, protocol = 'https:'} = {}) {
   const names = legacy
     ? ['mp-panel','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join']
-    : ['mp-panel','mp-lobby','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join','mp-create-fields','mp-join-fields','mp-mode-create','mp-mode-join','mp-custom-code','mp-title','mp-max-players','mp-duration','mp-room-title','mp-room-info','mp-copy-code','mp-ranking','mp-leave','mp-resume','mp-guest-hint'];
+    : ['mp-panel','mp-lobby','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join','mp-create-fields','mp-join-fields','mp-mode-create','mp-mode-join','mp-custom-code','mp-title','mp-max-players','mp-duration','mp-room-title','mp-room-info','mp-copy-code','mp-ranking','mp-leave','mp-cancel','mp-resume','mp-guest-hint'];
   const items = new Map(names.map(id => [id, fakeElement(id)]));
   globalThis.document = { getElementById(id) { return items.get(id) || null; }, createElement: fakeElement };
   globalThis.window = new EventTarget();
-  window.setTimeout = () => 0; // Do not wait 18 seconds for UI pending state.
-  globalThis.location = {protocol: 'https:'};
+  items.timers = [];
+  window.setTimeout = callback => items.timers.push(callback);
+  globalThis.location = {protocol, hostname};
   Object.defineProperty(globalThis, 'navigator', {value: {clipboard: {writeText: async () => {}}}, configurable: true});
   globalThis.CustomEvent ??= class extends Event {constructor(name,{detail}={}) {super(name);this.detail=detail;}};
   items.get('mp-name').value='Тест';
@@ -84,6 +85,43 @@ test('old cached HTML does not break click listeners', async () => {
   assert.equal(elements.get('mp-players').children.length,1);
 });
 
+
+test('local development connects to local backend instead of production', async () => {
+  const elements = await loadUI({hostname: 'localhost', protocol: 'http:'});
+  const sent = [];
+  window.addEventListener('mp:configure', e => sent.push(e.detail));
+  elements.get('mp-create').click();
+  assert.equal(sent[0].url, 'ws://localhost:8080');
+});
+
+
+test('cancel restores connection controls and emits transport cancellation', async () => {
+  const elements = await loadUI();
+  let cancelled = 0;
+  window.addEventListener('mp:cancel', () => cancelled++);
+  elements.get('mp-create').click();
+  assert.equal(elements.get('mp-create').disabled, true);
+  assert.equal(elements.get('mp-cancel').hidden, false);
+  elements.get('mp-cancel').click();
+  assert.equal(cancelled, 1);
+  assert.equal(elements.get('mp-create').disabled, false);
+  assert.equal(elements.get('mp-cancel').hidden, true);
+});
+
+test('timeout from a previous attempt does not cancel the current attempt', async () => {
+  const elements = await loadUI();
+  let cancelled = 0;
+  window.addEventListener('mp:cancel', () => cancelled++);
+  elements.get('mp-create').click();
+  window.dispatchEvent(new CustomEvent('mp:error', { detail: { code: 'NETWORK_ERROR' } }));
+  elements.get('mp-create').click();
+  elements.timers[0]();
+  assert.equal(cancelled, 0);
+  assert.equal(elements.get('mp-create').disabled, true);
+  elements.timers[1]();
+  assert.equal(cancelled, 1);
+  assert.equal(elements.get('mp-create').disabled, false);
+});
 
 test('creator can start a shared match, UI then shows resume and restart', async () => {
   const elements = await loadUI();

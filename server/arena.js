@@ -50,13 +50,16 @@ export function shoot(room, playerId, data, now) {
   const player = room.players.get(playerId);
   if (!player) return { error: 'NOT_IN_ROOM' };
   if (!vector(data?.origin) || !vector(data?.direction)) return { error: 'INVALID_RAY' };
-  const origin = data.origin, direction = data.direction;
+  const origin = data.origin;
+  let direction = data.direction;
   if (origin.some(x => Math.abs(x) > 50) || direction.some(x => Math.abs(x) > 1.01)) return { error: 'INVALID_RAY' };
   const length = Math.hypot(...direction);
   if (length < 0.98 || length > 1.02) return { error: 'INVALID_RAY' };
+  direction = direction.map(v => v / length);
   player.shots++;
   let closest = null, bestDistance = 25;
   for (const target of room.targets?.values() || []) {
+    if (now >= target.expiresAt) continue;
     const offset = target.position.map((v, i) => v - origin[i]);
     const projected = offset.reduce((sum, value, i) => sum + value * direction[i], 0);
     if (projected < 0 || projected > bestDistance) continue;

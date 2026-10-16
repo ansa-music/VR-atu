@@ -2,6 +2,7 @@ import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomStore, newPlayer } from './rooms.js';
 import { clearArena, tickArena, targetsSnapshot, shoot } from './arena.js';
+import { startPvp, tickPvp, pvpShoot, poseValidForPvp } from './pvp.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
@@ -60,10 +61,22 @@ function handle(player, msg) {
       if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
       rooms.start(room, player.id);
       clearArena(room);
-      tickArena(room, Date.now());
-      // Сначала переводим всех в состояние игры, затем публикуем первые мишени.
+      if (room.mode === 'pvp') {
+        startPvp(room, Date.now());
+        for (const member of room.players.values()) {
+          const peer = peers.get(member.id);
+          if (peer) {
+            peer.lastPosition = [...member.spawn];
+            peer.lastPoseAt = 0;
+          }
+        }
+      } else {
+        tickArena(room, Date.now());
+      }
       broadcast(room, 'room:update', { room: rooms.snapshot(room) });
-      broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+      if (room.mode === 'targets') {
+        broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+      }
       break;
     case 'player:shot': {
       if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
@@ -75,11 +88,15 @@ function handle(player, msg) {
           !msg.origin.every((v, i) => Number.isFinite(v) && Math.abs(v - player.lastPosition[i]) <= 2.5)) {
         return send(player.socket, 'error', { code: 'UNVERIFIED_SHOT_ORIGIN' });
       }
-      const result = shoot(room, player.id, msg, now);
+      const result = room.mode === 'pvp'
+        ? pvpShoot(room, room.players.get(player.id), msg, now)
+        : shoot(room, player.id, msg, now);
       if (result.error) return send(player.socket, 'error', { code: result.error });
       broadcast(room, 'shot:result', result);
       if (result.hit) {
-        broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+        if (room.mode === 'targets') {
+          broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+        }
         broadcast(room, 'room:update', { room: rooms.snapshot(room) });
       }
       break;
@@ -99,6 +116,7 @@ function handle(player, msg) {
       const now = Date.now();
       if (now - player.lastPoseAt < 45) return;
       if (!validVector(msg.position, 3, 50) || !validVector(msg.rotation, 4, 1)) return;
+      if (!poseValidForPvp(room, room.players.get(player.id), msg.position, now)) return;
       player.lastPoseAt = now;
       player.lastPosition = [...msg.position];
       broadcast(room, 'player:pose', { id: player.id, position: msg.position, rotation: msg.rotation }, player.id);
@@ -146,7 +164,7 @@ const timer = setInterval(() => {
   for (const room of rooms.rooms.values()) {
     const previous = room.phase;
     rooms.tick(room);
-    if (tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+    if (room.mode === 'targets' && tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
     if (previous !== room.phase) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
   }
 }, HEARTBEAT_MS);
@@ -157,7 +175,8 @@ const arenaTimer = setInterval(() => {
     const previous = room.phase;
     rooms.tick(room);
     if (previous !== room.phase) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
-    if (tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+    if (room.mode === 'pvp' && tickPvp(room, Date.now())) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+    if (room.mode === 'targets' && tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
   }
 }, 100);
 
@@ -165,6 +184,7 @@ server.listen(PORT, () => console.log('VR-ATU multiplayer server listening on', 
 function shutdown() {
   clearInterval(timer);
   clearInterval(arenaTimer);
+  for (const { socket } of peers.values()) socket.terminate();
   wss.close();
   server.close();
 }

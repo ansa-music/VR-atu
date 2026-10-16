@@ -61,9 +61,9 @@
     /* ---------- «?» слева сверху ---------- */
     #help-btn {
       position: fixed; top: 12px; left: 12px; z-index: 30;
-      width: 42px; height: 42px; padding: 0; border-radius: 50%; cursor: pointer;
+      min-width: 142px; height: 42px; padding: 0 14px; border-radius: 12px; cursor: pointer;
       display: grid; place-items: center;
-      font: 400 20px/1 var(--head); color: var(--cyan);
+      font: 600 14px/1 var(--head); color: var(--cyan);
       background: rgba(10, 15, 38, .62);
       border: 1px solid rgba(62, 197, 255, .45);
       text-shadow: 0 0 10px rgba(62, 197, 255, .8);
@@ -72,7 +72,15 @@
       transition: transform .15s, box-shadow .15s, color .15s;
     }
     #help-btn:hover { transform: scale(1.08); color: #fff; box-shadow: 0 0 26px rgba(62, 197, 255, .55), 0 6px 20px rgba(0, 0, 0, .35); }
-    body.ov-open #help-btn { display: none; }
+    body.ov-open #help-btn, body.ov-open #mouse-release { display: none; }
+    #mouse-release {
+      position: fixed; top: 62px; left: 12px; z-index: 30;
+      padding: 10px 14px; border: 1px solid #3ec5ff88; border-radius: 12px;
+      background: rgba(10,15,38,.85); color: #fff; font: 600 13px system-ui; cursor: pointer;
+    }
+    #mouse-release[hidden] { display: none; }
+    #menu-resume { padding: 12px 20px; margin-bottom: 16px; border: 1px solid #3ec5ff; border-radius: 12px; color: #fff; background: #154a55; font: inherit; cursor: pointer; }
+    #menu-resume[hidden] { display: none; }
 
     /* ---------- Стартовый экран ---------- */
     #overlay {
@@ -272,6 +280,7 @@
 <body class="ov-open">
   <div id="overlay" role="dialog" aria-modal="true" aria-labelledby="ov-title">
     <div class="ov-inner">
+      <button id="menu-resume" type="button" hidden>← Вернуться в игру</button>
       <div class="atu-brand" aria-label="ATU — VR тир"><span class="atu-mark">A<span>T</span>U</span><span class="atu-separator"></span><span class="atu-brand-text">АРЕНА<br>ТАКТИЧЕСКИЙ ТИР</span></div>
       <h1 class="ov-title" id="ov-title"><span class="t-vr">VR</span> <span class="t-tir">ТИР</span></h1>
       <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
@@ -369,6 +378,12 @@
             <input id="mp-title" maxlength="20" placeholder="Например, Турнир друзей" value="Комната ATU">
             <label class="mp-label" for="mp-custom-code">Код комнаты (по желанию)</label>
             <input id="mp-custom-code" type="text" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="Например, 123">
+            <label class="mp-label" for="mp-game-mode">Режим игры</label>
+            <select id="mp-game-mode" aria-label="Режим игры">
+              <option value="pvp" selected>ATU BASTION — против игроков (PvP)</option>
+              <option value="targets">Классический тир — общие мишени</option>
+            </select>
+            <p class="mp-muted" style="margin:6px 0 10px">PvP: две команды, защищённые зоны появления, укрытия, возрождение и счёт убийств.</p>
             <div class="mp-settings">
               <div><label class="mp-label" for="mp-max-players">Количество игроков</label>
                 <select id="mp-max-players"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option></select>
@@ -396,15 +411,18 @@
           <button type="button" id="mp-resume" hidden>Вернуться в матч</button>
           <div id="mp-players" aria-live="polite"></div>
           <div id="mp-ranking" aria-live="polite"></div>
-          <button type="button" id="mp-leave">Выйти из комнаты</button>
+          <button type="button" id="mp-leave">← Выйти в главное меню</button>
         </div>
+        <button id="mp-cancel" type="button" hidden>Отменить подключение</button>
         <p id="mp-status" role="status">Сервер подключён автоматически.</p>
       </section>
-      <p class="ov-foot">Кнопка «?» в левом верхнем углу вернёт эту справку.</p>
+      <p class="ov-foot">Esc или «← Меню» — открыть меню. Выход из комнаты возвращает в главное меню.</p>
     </div>
   </div>
 
-  <button id="help-btn" type="button" title="Справка" aria-label="Справка">?</button>
+  <button id="help-btn" type="button" title="Открыть меню (Esc)" aria-label="Вернуться в меню">← Меню · Esc</button>
+
+  <button id="mouse-release" type="button" title="Освободить курсор и открыть меню (Tab)">Курсор мыши · Tab</button>
 
   <div id="mk">
     <button id="mk-connect" type="button">🔌 Подключить МК</button>
@@ -413,9 +431,9 @@
 
   <div id="mp-controls-tip" hidden>Матч начался! Нажмите на игровое поле, чтобы управлять прицелом и стрелять.</div>
 
-  <script type="module" src="js/overlay.js?v=atu-netplay-20261016c"></script>
+  <script type="module" src="js/overlay.js?v=atu-bastion-v1"></script>
   <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016c"></script>
-  <script type="module" src="js/main.js?v=atu-weapons-20261016a"></script>
-  <script type="module" src="js/multiplayer-ui.js?v=atu-netplay-20261016c"></script>
+  <script type="module" src="js/main.js?v=atu-weapons-bastion-1"></script>
+  <script type="module" src="js/multiplayer-ui.js?v=atu-bastion-v1"></script>
 </body>
 </html>

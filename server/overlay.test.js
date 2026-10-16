@@ -30,7 +30,7 @@ test('multiplayer start hides solo launch and opens arena for every player', asy
   const elements = Object.fromEntries(ids.map(id => [id, element()]));
   const body = { classList: element().classList };
   globalThis.window = new EventTarget();
-  globalThis.document = { body, getElementById(id) { return elements[id] || null; } };
+  globalThis.document = { body, addEventListener() {}, getElementById(id) { return elements[id] || null; } };
   globalThis.CustomEvent ??= class extends Event {
     constructor(type, options = {}) { super(type); this.detail = options.detail; }
   };

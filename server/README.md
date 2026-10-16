@@ -1,43 +1,75 @@
-# VR-ATU Multiplayer v0.1 — server foundation
+# VR-ATU multiplayer server
 
-This is an **experimental rooms-and-presence backend**, not a finished multiplayer game. The existing single-player client on GitHub Pages is unchanged.
+Node.js 20+; the browser client is static Three.js/WebXR (no build step).
 
-## Local run
+## Local development
 
-Requires Node.js 20+:
-
-```bash
+```sh
 cd server
-npm install
+npm install --package-lock=false
+npm test
 npm start
 ```
 
-Check http://localhost:8080/health. Run `npm test` for room logic tests.
+In another terminal, from the repository root:
 
-Client WebSocket endpoint: `ws://localhost:8080` (local only). Use `wss://` behind HTTPS in production.
+```sh
+python3 serve.py 8000
+```
+
+The local HTTP client automatically uses the loopback WebSocket server on
+port 8080. Hosted clients use `js/server-config.js`. Production HTTPS requires
+WSS and a separate long-lived Node server; GitHub Pages only serves the client.
+`GET /health` returns `{ "ok": true, "rooms": ..., "players": ... }`.
 
 Optional environment variables:
-- `PORT`: listening port, defaults to 8080.
-- `ALLOWED_ORIGINS`: comma-separated browser Origin allowlist (set this in production, e.g. `https://ansa-music.github.io`).
+- `PORT`: default 8080 (0 selects an available port for integration tests).
+- `ALLOWED_ORIGINS`: comma-separated browser Origin allowlist; configure this
+  in production, for example `https://ansa-music.github.io`.
+
+## User flow
+
+Create a room (optional three-digit code, title, capacity and duration), or
+join by code. Only the host starts a match. Targets and hit scoring are shared
+and owned by the server. The host role transfers when the host leaves.
+Players can join between rounds, including after a match finishes.
+
+During play, **Tab**, **Esc**, **Курсор мыши** or **← Меню** opens the menu and releases the mouse;
+**Вернуться в матч** resumes controls. The shared round continues while a
+player reads the menu. **Выйти в главное меню** disconnects and leaves the
+room. A stalled connection can be cancelled and retried.
 
 ## Protocol v1
 
-Client JSON messages:
-- `{"type":"room:create","name":"Player"}`
-- `{"type":"room:join","code":"ABC123","name":"Player"}`
-- `{"type":"room:leave"}`
-- `{"type":"round:start"}` (host only)
-- `{"type":"player:pose","position":[0,1.6,0],"rotation":[0,0,0,1]}`
+Client messages: `room:create` (`name`, `options`), `room:join` (`code`, `name`),
+`room:leave`, `round:start`, `player:pose` (`position`, `rotation`),
+`player:shot` (`origin`, `direction`), `player:skin` (`skin`).
 
-Server responses: `welcome`, `room:joined`, `room:update`, `room:left`, `player:pose`, `error`.
+Server messages: `welcome`, `room:joined`, `room:update`, `room:left`,
+`targets:update`, `player:pose`, `shot:result`, `error`.
 
-### Not yet implemented
-- Rendering of remote avatars in Three.js.
-- Synced targets, shots, score and authoritative hit validation.
-- Proper per-controller VR hand pose and motion reconciliation.
-- Persistent reconnect/resume and production authentication.
-- Integrated multiplayer UI.
+`npm test` includes room/scoring regressions, connection lifecycle tests,
+UI tests and a real two-WebSocket-client integration test.
 
-**Security warning:** pose updates are relayed with basic validation, not server physics checks. Do not use them to award scores. Multiplayer scoring must be authoritative on the server.
+## Browser smoke test
 
-Do not merge into `main` until multiplayer client and server integration has been tested.
+Start both services above. Install optional Playwright outside the checkout:
+
+```sh
+npm install --prefix /tmp/vr-atu-browser --package-lock=false playwright
+NODE_PATH=/tmp/vr-atu-browser/node_modules node server/smoke-browser.cjs
+```
+
+Run the second command from the repository root. The runner uses system
+Chromium at `/usr/bin/chromium`; override with `CHROMIUM_PATH` if needed.
+It exercises two browser clients, firing LMB while holding RMB aim,
+Tab pointer release, menu/resume/Escape, leave/host transfer,
+and cancellation/retry. It fails on page errors or missing expected behavior.
+
+## Limits
+
+Rooms are in memory and disappear on server restart. Lost connections do not
+resume an identity or score automatically. Joining an ongoing round is rejected.
+There are no accounts, voice chat or persistence. Aim/pose are client-reported;
+server-scored targets do not make this cheat-proof. Real VR/Arduino hardware
+and the production WSS deployment still need validation.

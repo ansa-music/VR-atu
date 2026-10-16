@@ -5,6 +5,8 @@
 const overlay = document.getElementById('overlay');
 const play = document.getElementById('play');
 const help = document.getElementById('help-btn');
+const mouseRelease = document.getElementById('mouse-release');
+const resume = document.getElementById('menu-resume');
 const mkStatus = document.getElementById('mk-status');
 const mkConnect = document.getElementById('mk-connect');
 
@@ -15,8 +17,13 @@ let inMultiplayerRoom = false;
 let multiplayerPhase = 'lobby';
 
 const isRunning = () => state === 'countdown' || state === 'play';
+const canResume = () => inMultiplayerRoom ? multiplayerPhase === 'playing' : isRunning();
 
 function renderPlay() {
+  if (resume) {
+    resume.hidden = !canResume();
+    resume.textContent = inMultiplayerRoom ? '← Вернуться в матч' : '← Вернуться в игру';
+  }
   if (!play) return;
   // Одиночный запуск никогда не показывается участникам сетевой комнаты.
   document.body.classList.toggle('mp-in-room', inMultiplayerRoom);
@@ -42,6 +49,10 @@ function setOpen(open) {
   document.body.classList.toggle('ov-open', open);
   if (open) {
     renderPlay();
+    if (inMultiplayerRoom) {
+      const target = canResume() ? resume : document.getElementById('mp-start');
+      if (target && !target.hidden) target.focus({ preventScroll: true });
+    }
     if (ready && play && !inMultiplayerRoom) {
       try { play.focus({ preventScroll: true }); } catch (_) { /* ignore */ }
     }
@@ -52,6 +63,7 @@ function setOpen(open) {
 ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'click'].forEach((type) => {
   if (overlay) overlay.addEventListener(type, (e) => e.stopPropagation());
   if (help) help.addEventListener(type, (e) => e.stopPropagation());
+  mouseRelease?.addEventListener(type, e => e.stopPropagation());
 });
 
 if (play) {
@@ -72,6 +84,41 @@ if (help) {
     setOpen(true);
   });
 }
+
+mouseRelease?.addEventListener('click', () => { if (!xrActive) setOpen(true); });
+
+function resumeGame() {
+  if (!canResume() || xrActive) return;
+  setOpen(false);
+  window.dispatchEvent(new Event(inMultiplayerRoom ? 'mp:focus-controls' : 'game:start'));
+}
+resume?.addEventListener('click', resumeGame);
+
+// Escape releases captured mouse input; a second Escape resumes from the menu.
+window.addEventListener('keydown', e => {
+  if (xrActive) return;
+  if (e.code === 'Tab' && !e.repeat && overlay?.classList.contains('is-hidden')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    setOpen(true);
+    return;
+  }
+  if (e.code === 'Escape' && !e.repeat) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (overlay?.classList.contains('is-hidden')) setOpen(true);
+    else resumeGame();
+    return;
+  }
+  // Typing names/codes or navigating the menu must not trigger game controls.
+  if (overlay && !overlay.classList.contains('is-hidden')) e.stopPropagation();
+}, true);
+let mouseWasLocked = !!document.pointerLockElement;
+document.addEventListener('pointerlockchange', () => {
+  const locked = !!document.pointerLockElement;
+  if (mouseWasLocked && !locked && !xrActive) setOpen(true);
+  mouseWasLocked = locked;
+});
 
 if (mkConnect) {
   mkConnect.addEventListener('click', () => { setTimeout(() => mkConnect.blur(), 0); });
@@ -96,11 +143,16 @@ window.addEventListener('game:state', (e) => {
 });
 
 function updateMultiplayerOverlay(room) {
+  const previousPhase = multiplayerPhase;
+  const wasInRoom = inMultiplayerRoom;
   inMultiplayerRoom = !!room;
   multiplayerPhase = room?.phase || 'lobby';
   renderPlay();
-  if (multiplayerPhase === 'playing') setOpen(false);
-  else if (!xrActive) setOpen(true);
+  // Score/skin/presence updates must not close a menu opened by the player.
+  if (xrActive) return;
+  if (multiplayerPhase === 'playing') {
+    if (!wasInRoom || previousPhase !== 'playing') setOpen(false);
+  } else setOpen(true);
 }
 
 window.addEventListener('mp:room:joined', e => updateMultiplayerOverlay(e.detail?.room));
@@ -119,7 +171,10 @@ window.addEventListener('mp:resume', () => {
 
 window.addEventListener('game:xr', (e) => {
   xrActive = !!(e && e.detail && e.detail.active);
+  if (help) help.hidden = xrActive;
+  if (mouseRelease) mouseRelease.hidden = xrActive;
   if (xrActive) setOpen(false);
+  else setOpen(true);
 });
 
 // Длинный статус МК обрезается многоточием — показываем полный текст во всплывающей подсказке.

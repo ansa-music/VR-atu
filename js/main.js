@@ -5,8 +5,10 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-roomfix-20261016c';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-mpnav-20261016d';
 import { createSharedArena } from './multiplayer-arena.js';
+import { createPvpMap } from './pvp-map.js';
+import { slideMovement } from './pvp-layout.js';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 
@@ -34,7 +36,7 @@ const CROUCH_EYE = 1.05;
 const BASE_FOV = 70;
 // движение: скорости м/с, ускорение 1/с, прыжок на 0.5 м
 const MOVE = { walk: 3.2, sprint: 5.8, crouch: 1.5, ads: 0.6, accel: 12, airAccel: 1.6, jump: 0.5, gravity: 9.81 };
-const HINT = 'ЛКМ — огонь · ПКМ — прицел · R — перезарядка · 1–5 / колесо — оружие · B — режим огня · Shift — бег · C — присед · Пробел — прыжок';
+const HINT = 'ЛКМ — огонь · ПКМ — прицел · R — перезарядка · 1–5 / колесо — оружие · B — режим огня · Shift — бег · C — присед · Пробел — прыжок · Tab / Esc — курсор и меню';
 
 // ---------- рендер и сцена ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -55,10 +57,53 @@ scene.add(rig);
 const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
 const sharedArena = createSharedArena(scene);
 
+const envBefore = new Set(scene.children);
 const env = buildEnvironment(scene);
-const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
 const range = safeCall(rangeMod.createRange, scene);
 const logo = safeCall(logoMod.createAtuLogo, scene);
+// тир, рубеж и вывеска скрываются, когда идёт PvP на карте «Бастион»
+const soloEnvironment = scene.children.filter(obj => !envBefore.has(obj) && !obj.isLight);
+const pvpMap = createPvpMap(scene);
+let pvpEnabled = false;
+let lastMySpawnSeq = 0;
+const pvpPos = new THREE.Vector3();
+function updatePvpWorld(room) {
+  pvpEnabled = !!room && room.mode === 'pvp';
+  pvpMap.setVisible(pvpEnabled);
+  for (const obj of soloEnvironment) obj.visible = !pvpEnabled;
+  if (!pvpEnabled) { lastMySpawnSeq = 0; return; }
+  if (!room.players || room.phase !== 'playing') return;
+  const myPlayer = room.players.find(p => p.id === multiplayerPlayerId);
+  if (myPlayer?.spawn && myPlayer.spawnSeq !== lastMySpawnSeq) {
+    lastMySpawnSeq = myPlayer.spawnSeq;
+    // Recenter the tracked headset position without moving a VR player physically.
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(pvpPos);
+    rig.position.x += myPlayer.spawn[0] - pvpPos.x;
+    rig.position.z += myPlayer.spawn[2] - pvpPos.z;
+    if (!renderer.xr.isPresenting) {
+      yaw = myPlayer.team === 'bravo' ? Math.PI : 0;
+      pitch = 0;
+      rig.rotation.y = 0;
+    }
+    feet = vy = 0;
+    onGround = true;
+    vel.set(0, 0, 0);
+    recoilP = recoilY = punch = 0;
+    arsenal.resetAll();
+  }
+}
+let multiplayerPlayerId = null;
+addEventListener('mp:room:joined', e => {
+  multiplayerPlayerId = e.detail?.playerId;
+  updatePvpWorld(e.detail?.room);
+});
+addEventListener('mp:room:update', e => updatePvpWorld(e.detail?.room));
+addEventListener('mp:room:left', () => { multiplayerPlayerId = null; updatePvpWorld(null); });
+addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected') { multiplayerPlayerId = null; updatePvpWorld(null); }
+});
+const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
 const hud = safeCall(hudMod.createHud);
 
 // тень игрока на полу
@@ -417,6 +462,7 @@ function collectHittables() {
   hittables.length = 0;
   if (scoring()) for (const t of targets.children) hittables.push(t);
   if (!sharedArena.active && menu.mesh.visible && state !== 'play') hittables.push(menu.mesh);
+  if (pvpEnabled) return; // на «Бастионе» рубежа нет, попадания считает сервер
   for (const p of plateSet) hittables.push(p);
   for (const c of staticColliders) hittables.push(c);
 }
@@ -543,7 +589,7 @@ let sprinting = false, sprintLock = 0;
 let vrKick = 0; // накопленный подброс ствола в VR, рад
 
 function tryShoot(first, source) {
-  if (sharedArena.active && !sharedArena.playing) return;
+  if (sharedArena.active && (!sharedArena.playing || !sharedArena.alive)) return;
   if (!arsenal.ready) return;
   if (sprinting) {
     // с бега стрелять нельзя: сначала остановиться
@@ -662,26 +708,33 @@ const locked = () => document.pointerLockElement === canvas;
 const pcTrigger = { held: false, first: false, ndc: null };
 let aimHeld = false;
 
-canvas.addEventListener('pointerdown', (e) => {
+const grabMouse = () => { try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {} };
+// mousedown приходит для каждой кнопки, в том числе ЛКМ при зажатой ПКМ (pointerdown — нет)
+canvas.addEventListener('mousedown', (e) => {
   if (renderer.xr.isPresenting) return;
-  if (e.button === 2) { aimHeld = true; return; }
+  if (e.button === 2) {
+    aimHeld = true;
+    if (!locked()) grabMouse(); // прицеливание может быть первым действием
+    return;
+  }
   if (e.button !== 0) return;
   // Первый клик после начала сетевого матча захватывает мышь, не тратя патрон.
-  if (sharedArena.playing && !locked()) {
-    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+  if (sharedArena.playing && !locked() && !aimHeld) {
+    grabMouse();
     return;
   }
   pcTrigger.held = true;
   pcTrigger.first = true;
-  if (locked()) {
+  if (locked() || aimHeld) {
     pcTrigger.ndc = null;
+    if (!locked()) grabMouse();
   } else {
     // без захвата мыши стреляем по курсору и пробуем захватить мышь для обзора
     pcTrigger.ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
-    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+    grabMouse();
   }
 });
-addEventListener('pointerup', (e) => {
+addEventListener('mouseup', (e) => {
   if (e.button === 0) pcTrigger.held = false;
   if (e.button === 2) aimHeld = false;
 });
@@ -699,6 +752,7 @@ function updateMultiplayerControlsTip() {
 }
 document.addEventListener('pointerlockchange', () => {
   document.body.classList.toggle('locked', locked());
+  if (!locked()) { keys.clear(); aimHeld = false; pcTrigger.held = false; }
   updateMultiplayerControlsTip();
 });
 addEventListener('mp:room:update', updateMultiplayerControlsTip);
@@ -1020,13 +1074,21 @@ function updateMovement(dt) {
   vel.z += (tz - vel.z) * k;
   rig.position.x += vel.x * dt;
   rig.position.z += vel.z * dt;
-  const r = Math.hypot(rig.position.x, rig.position.z);
+  const r = pvpEnabled ? 0 : Math.hypot(rig.position.x, rig.position.z);
   if (r > ARENA) {
     const nx = rig.position.x / r, nz = rig.position.z / r;
     rig.position.x = nx * ARENA;
     rig.position.z = nz * ARENA;
     const out = vel.x * nx + vel.z * nz;
     if (out > 0) { vel.x -= nx * out; vel.z -= nz * out; }
+  }
+  if (pvpEnabled && sharedArena.playing) {
+    // стены и укрытия «Бастиона»: скольжение вдоль препятствий
+    camera.updateWorldMatrix(true, false);
+    camera.getWorldPosition(pvpPos);
+    const [newX, newZ] = slideMovement(headPos.x, headPos.z, pvpPos.x, pvpPos.z);
+    rig.position.x += newX - pvpPos.x;
+    rig.position.z += newZ - pvpPos.z;
   }
   const hspeed = Math.hypot(vel.x, vel.z);
   speedFrac = hspeed / MOVE.walk;
@@ -1196,6 +1258,8 @@ mk.autoConnect();
 // ---------- HUD ----------
 function weaponStatus(w) {
   const d = w.def;
+  const pvp = pvpEnabled && sharedArena.playing;
+  if (pvp && !sharedArena.alive) return { text: 'ВОЗРОЖДЕНИЕ…', progress: null };
   if (!arsenal.ready) return { text: 'СМЕНА ОРУЖИЯ', progress: 1 - arsenal.lowered };
   if (w.overheat > 0) return { text: 'ПЕРЕГРЕВ', progress: 1 - w.overheat / d.overheatTime };
   const r = w.reloading;
@@ -1206,6 +1270,7 @@ function weaponStatus(w) {
   }
   if (w.cycle > 0) return { text: d.action === 'pump' ? 'ПОМПА' : 'ПЕРЕЗАРЯЖАНИЕ ЗАТВОРОМ', progress: w.cycleProgress };
   if (w.empty) return { text: w.reserve > 0 ? 'ПУСТО — R' : 'НЕТ ПАТРОНОВ', progress: null };
+  if (pvp) return { text: `♥ ${sharedArena.health} HP · убийств: ${sharedArena.kills}`, progress: sharedArena.health / 100 };
   return null;
 }
 
