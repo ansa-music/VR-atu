@@ -5,10 +5,10 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-bastion-v2';
-import { createSharedArena } from './multiplayer-arena.js?v=atu-bastion-v2';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-pvp-v3';
+import { createSharedArena } from './multiplayer-arena.js?v=atu-pvp-v3';
 import { createPvpMap } from './pvp-map.js';
-import { slideMovement } from './pvp-layout.js?v=atu-bastion-v2';
+import { slideMovement } from './pvp-layout.js?v=atu-pvp-v3';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 import { QUALITY, detectQuality } from './quality.js';
@@ -62,6 +62,12 @@ const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
 const sharedArena = createSharedArena(scene);
 
 // PvP: подсказки о попаданиях, хедшотах и убийствах
+const pvpState = document.createElement('div');
+pvpState.id = 'pvp-state';
+pvpState.hidden = true;
+pvpState.style.cssText = 'position:fixed;top:32%;left:50%;transform:translateX(-50%);padding:18px 28px;z-index:9;background:rgba(5,11,22,.84);border:1px solid rgba(255,152,82,.55);border-radius:16px;color:#fff;font:700 18px system-ui;text-align:center;pointer-events:none;text-shadow:0 2px 8px #080b13;box-shadow:0 10px 38px rgba(0,0,0,.3)';
+document.body.appendChild(pvpState);
+
 const pvpFeed = document.createElement('div');
 pvpFeed.id = 'pvp-feedback';
 pvpFeed.style.cssText = 'position:fixed;top:14%;left:50%;transform:translateX(-50%);z-index:9;color:#effaff;text-shadow:0 1px 9px #050813;font:800 24px system-ui;text-align:center;pointer-events:none;opacity:0';
@@ -70,6 +76,11 @@ let pvpFeedbackTime = 0;
 addEventListener('mp:shot-feedback', event => {
   const shot = event.detail;
   if (!shot || !shot.hit || !pvpEnabled) return;
+  // Shotguns can damage multiple players; resolve our own victim entry rather
+  // than only the server's highest-damage primary target.
+  const myHit = Array.isArray(shot.victims)
+    ? shot.victims.find(v => v.victimId === multiplayerPlayerId)
+    : (shot.victimId === multiplayerPlayerId ? shot : null);
   if (shot.playerId === multiplayerPlayerId) {
     pvpFeed.textContent = shot.eliminated ? 'ПРОТИВНИК УНИЧТОЖЕН  +1' :
       shot.headshot ? 'ПОПАДАНИЕ В ГОЛОВУ  -' + shot.damage : 'ПОПАДАНИЕ  -' + shot.damage;
@@ -80,8 +91,8 @@ addEventListener('mp:shot-feedback', event => {
       fx.popup?.(new THREE.Vector3(...shot.position),
         shot.eliminated ? 'ФРАГ!' : '-' + shot.damage, shot.eliminated ? '#ffd23f' : '#3ec5ff');
     }
-  } else if (shot.victimId === multiplayerPlayerId) {
-    pvpFeed.textContent = shot.eliminated ? 'ВЫ УНИЧТОЖЕНЫ — ВОЗРОЖДЕНИЕ' : 'УРОН  -' + shot.damage;
+  } else if (myHit) {
+    pvpFeed.textContent = myHit.eliminated ? 'ВЫ УНИЧТОЖЕНЫ — ВОЗРОЖДЕНИЕ' : 'УРОН  -' + myHit.damage;
     pvpFeed.style.color = '#ff9b54';
     pvpFeedbackTime = performance.now() + 1350;
   }
@@ -684,7 +695,7 @@ function tryShoot(first, source) {
     });
   }
   if (shot.round) shots++;
-  if (sharedArena.playing) sharedArena.fire(shotOrigin, shotDir); // в сети попадание считает сервер
+  if (sharedArena.playing) sharedArena.fire(shotOrigin, shotDir, d.id); // урон и темп оружия проверяются на сервере
 
   currentGun(controller)?.fire?.();
   sound('gunshot', d.id);
@@ -1153,6 +1164,13 @@ function updateMovement(dt) {
     }
   }
   if (move.lengthSq() > 1) move.normalize();
+  // Defeated players may look around, but cannot move or leave their corpse
+  // position until the server provides a new randomized spawn.
+  if (sharedArena.isPvp && sharedArena.playing && !sharedArena.alive) {
+    move.set(0, 0);
+    vel.set(0, 0, 0);
+    jumpRequested = false;
+  }
 
   const w = arsenal.current;
   const wantCrouch = xr ? vrCrouch : keys.has('KeyC');
@@ -1515,6 +1533,22 @@ renderer.setAnimationLoop(() => {
   updateHead();
   updateMultiplayerPresence(performance.now(), dt);
   sharedArena.update(dt);
+  if (pvpEnabled && sharedArena.playing && !renderer.xr.isPresenting &&
+      !document.body.classList.contains('ov-open')) {
+    if (!sharedArena.alive) {
+      pvpState.hidden = false;
+      pvpState.textContent = 'ВЫ ПОГИБЛИ · ВОЗРОЖДЕНИЕ ЧЕРЕЗ ' +
+        sharedArena.respawnSeconds.toFixed(1) + ' С';
+    } else if (sharedArena.shieldSeconds > .1) {
+      pvpState.hidden = false;
+      pvpState.textContent = 'ЗАЩИТА ПОСЛЕ ПОЯВЛЕНИЯ · ' +
+        sharedArena.shieldSeconds.toFixed(1) + ' С';
+    } else {
+      pvpState.hidden = true;
+    }
+  } else {
+    pvpState.hidden = true;
+  }
 
   // оружие: смена, перезарядка, события
   arsenal.update(dt);

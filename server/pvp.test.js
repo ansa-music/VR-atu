@@ -54,7 +54,7 @@ test('shot behind solid cover is blocked even when aimed at a player',()=>{
   a.position=[0,1.6,5];
   b.position=[0,1.6,-5];
   b.invulnerableUntil=0;
-  const result=pvpShoot(room,a,{origin:[0,1.6,5],direction:[0,0,-1]},now+2000);
+  const result=pvpShoot(room,a,{weapon:'ak',origin:[0,1.6,5],direction:[0,0,-1]},now+2000);
   assert.equal(result.hit,false);
   assert.equal(b.health,100);
 });
@@ -64,8 +64,8 @@ test('head damage, elimination, score and delayed respawn are server-controlled'
   a.position=[-8,1.6,1];
   b.position=[-8,1.6,-1];
   b.invulnerableUntil=0;
-  const ray={origin:[-8,1.6,1],direction:[0,0,-1]};
-  assert.equal(pvpShoot(room,a,ray,now+2000).damage,67);
+  const ray={weapon:'ak',origin:[-8,1.6,1],direction:[0,0,-1]};
+  assert.equal(pvpShoot(room,a,ray,now+2000).damage,53);
   const kill=pvpShoot(room,a,ray,now+2100);
   assert.equal(kill.eliminated,true);
   assert.equal(b.health,0);
@@ -83,7 +83,7 @@ test('head damage, elimination, score and delayed respawn are server-controlled'
 test('spawn protection and friendly-fire protection are active',()=>{
   const {room,a,b,now}=duel();
   a.position=[-8,1.6,1];b.position=[-8,1.6,-1];
-  const ray={origin:[-8,1.6,1],direction:[0,0,-1]};
+  const ray={weapon:'ak',origin:[-8,1.6,1],direction:[0,0,-1]};
   assert.equal(pvpShoot(room,a,ray,now+100).hit,false);
   b.invulnerableUntil=0;
   b.team='alpha';
