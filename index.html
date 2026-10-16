@@ -237,6 +237,28 @@
     #mp-section button:disabled { opacity: .5; cursor: default; }
     #mp-status { color: #c9d6ff; font-size: 13px; min-height: 1em; }
     #mp-code { font-size: 20px; letter-spacing: 3px; color: #34e89e; }
+    .atu-brand { display:flex;align-items:center;justify-content:center;gap:12px;margin:0 auto 15px;font-family:var(--head); }
+    .atu-mark { letter-spacing:-.08em;font-size:clamp(33px,5vw,52px);color:#f4f8ff;text-shadow:0 0 22px #3ec5ff75 }
+    .atu-mark span { color:#3ec5ff }
+    .atu-separator { width:2px;height:39px;background:linear-gradient(#3ec5ff,#7c5cff) }
+    .atu-brand-text { color:#a9b6e6;font:700 11px/1.4 var(--body);letter-spacing:.21em;text-align:left }
+    #mp-section { color:#fff }
+    .mp-muted { color:#a9b6e6;font-size:14px }
+    #mp-section [hidden] {display:none!important}
+    #mp-section .mp-modes { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 14px }
+    #mp-section .mp-modes button {margin:0;padding:13px 5px;line-height:1.2;font-weight:700}
+    #mp-section .mp-modes button[aria-pressed="true"] {background:#3ec5ff;color:#071425}
+    #mp-section .mp-label {display:block;font-size:13px;color:#a9b6e6;margin-top:9px}
+    #mp-section select {width:100%;padding:10px 12px;border-radius:9px;background:#101832;border:1px solid #566299;color:#fff;font:inherit}
+    #mp-section .mp-settings {display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    #mp-section .mp-primary {background:linear-gradient(115deg,#3ec5ff,#7c5cff);font-weight:800;width:100%;margin:15px 0 0;border:0}
+    #mp-section .mp-advanced {margin-top:12px;color:#8fa3d9;font-size:12px}
+    #mp-section .mp-code-line {display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0;padding:12px;border:1px solid #3ec5ff55;border-radius:12px}
+    #mp-section #mp-code {font:800 32px var(--head);letter-spacing:.16em}
+    #mp-section .mp-lobby-head {display:flex;justify-content:space-between;align-items:center;gap:12px}
+    #mp-section #mp-room-info {font-size:12px;color:#a9b6e6}
+    #mp-section #mp-players>div {padding:5px 0;border-bottom:1px solid #fff2}
+    @media(max-width:500px) {#mp-section .mp-settings{grid-template-columns:1fr}}
   </style>
   <script type="importmap">
     {
@@ -250,6 +272,7 @@
 <body class="ov-open">
   <div id="overlay" role="dialog" aria-modal="true" aria-labelledby="ov-title">
     <div class="ov-inner">
+      <div class="atu-brand" aria-label="ATU — VR тир"><span class="atu-mark">A<span>T</span>U</span><span class="atu-separator"></span><span class="atu-brand-text">ARENA<br>TACTICAL UNIT</span></div>
       <h1 class="ov-title" id="ov-title"><span class="t-vr">VR</span> <span class="t-tir">ТИР</span></h1>
       <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
 
@@ -305,22 +328,48 @@
         <select id="skin-select" style="width:100%;padding:12px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit"></select>
         <p style="color:#a9b6e6;font-size:13px;margin-bottom:0">Выбран: <span id="skin-description">CYBER ICE</span>. Скин сохраняется на этом устройстве.</p>
       </section>
-      <section id="mp-section" aria-label="Мультиплеер, экспериментальная версия">
-        <h2>МУЛЬТИПЛЕЕР · BETA</h2>
-        <p style="font-size:13px;color:#a9b6e6">Создайте комнату и поделитесь кодом с друзьями. Онлайн-подключение станет доступно после запуска сервера.</p>
+      <section id="mp-section" aria-label="Сетевая игра">
+        <h2>СЕТЕВАЯ ИГРА</h2>
+        <p class="mp-muted">Создайте свою комнату или подключитесь к друзьям по трём цифрам.</p>
         <div id="mp-panel">
-          <details style="margin-bottom:8px"><summary style="color:#8fa3d9;cursor:pointer;font-size:12px">Дополнительные настройки подключения</summary><input id="mp-server" type="url" placeholder="wss://сервер-для-тестирования" aria-label="Адрес тестового сервера" autocomplete="off"></details>
-          <input id="mp-name" maxlength="20" placeholder="Имя игрока" aria-label="Имя игрока">
-          <input id="mp-join-code" maxlength="6" placeholder="Код комнаты" aria-label="Код комнаты">
-          <button type="button" id="mp-create">Создать комнату</button>
-          <button type="button" id="mp-join">Войти по коду</button>
+          <input id="mp-name" maxlength="20" placeholder="Ваше имя" aria-label="Ваше имя">
+          <div class="mp-modes">
+            <button id="mp-mode-create" type="button" aria-pressed="true">Создать комнату</button>
+            <button id="mp-mode-join" type="button" aria-pressed="false">Войти в существующую</button>
+          </div>
+          <div id="mp-create-fields">
+            <label class="mp-label" for="mp-title">Название комнаты</label>
+            <input id="mp-title" maxlength="20" placeholder="Например, Турнир друзей" value="Комната ATU">
+            <label class="mp-label" for="mp-custom-code">Код комнаты (по желанию)</label>
+            <input id="mp-custom-code" type="text" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="Например, 123">
+            <div class="mp-settings">
+              <div><label class="mp-label" for="mp-max-players">Количество игроков</label>
+                <select id="mp-max-players"><option value="2">2</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option></select>
+              </div>
+              <div><label class="mp-label" for="mp-duration">Длительность раунда</label>
+                <select id="mp-duration"><option value="30">30 секунд</option><option value="60" selected>60 секунд</option><option value="90">90 секунд</option><option value="120">120 секунд</option></select>
+              </div>
+            </div>
+            <button id="mp-create" class="mp-primary" type="button">Создать мою комнату</button>
+          </div>
+          <div id="mp-join-fields" hidden>
+            <label class="mp-label" for="mp-join-code">Код комнаты друга</label>
+            <input id="mp-join-code" type="text" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="123">
+            <button id="mp-join" class="mp-primary" type="button">Подключиться к комнате</button>
+          </div>
+          <details class="mp-advanced"><summary>Дополнительные настройки сервера</summary>
+            <input id="mp-server" type="url" placeholder="wss://адрес-сервера" aria-label="Адрес сервера">
+          </details>
         </div>
-        <div>Код: <strong id="mp-code">—</strong></div>
-        <div id="mp-players" aria-live="polite"></div>
-        <div id="mp-ranking" aria-live="polite"></div>
-        <button type="button" id="mp-start" hidden>Запустить сетевой таймер</button>
-        <button type="button" id="mp-leave">Покинуть комнату</button>
-        <p id="mp-status" role="status">Подготовлено подключение к серверу. Онлайн-сервер пока не развёрнут.</p>
+        <div id="mp-lobby" hidden>
+          <div class="mp-lobby-head"><strong id="mp-room-title">Комната ATU</strong><span id="mp-room-info"></span></div>
+          <div class="mp-code-line"><span>Код приглашения</span><strong id="mp-code">—</strong><button type="button" id="mp-copy-code">Копировать код</button></div>
+          <div id="mp-players" aria-live="polite"></div>
+          <div id="mp-ranking" aria-live="polite"></div>
+          <button type="button" id="mp-start" class="mp-primary" hidden>Начать раунд</button>
+          <button type="button" id="mp-leave">Выйти из комнаты</button>
+        </div>
+        <p id="mp-status" role="status">Сервер подключён автоматически.</p>
       </section>
       <p class="ov-foot">Кнопка «?» в левом верхнем углу вернёт эту справку.</p>
     </div>
