@@ -11,29 +11,38 @@ const mkConnect = document.getElementById('mk-connect');
 let ready = false;
 let state = 'menu'; // 'menu' | 'countdown' | 'play' | 'over'
 let xrActive = false;
+let inMultiplayerRoom = false;
+let multiplayerPhase = 'lobby';
 
 const isRunning = () => state === 'countdown' || state === 'play';
 
 function renderPlay() {
   if (!play) return;
+  // Одиночный запуск никогда не показывается участникам сетевой комнаты.
+  document.body.classList.toggle('mp-in-room', inMultiplayerRoom);
+  play.hidden = inMultiplayerRoom;
   if (!ready) {
     play.disabled = true;
     play.textContent = 'Загрузка…';
     return;
   }
   play.disabled = false;
-  play.textContent = isRunning() ? '▶ ПРОДОЛЖИТЬ' : '▶ ИГРАТЬ';
+  play.textContent = isRunning() ? '▶ ПРОДОЛЖИТЬ ОДИНОЧНУЮ' : '▶ ОДИНОЧНАЯ ИГРА';
 }
 
 function setOpen(open) {
   if (!overlay) return;
+  // Возвращаем курсор, когда открываем лобби после матча.
+  if (open && document.pointerLockElement && document.exitPointerLock) {
+    try { document.exitPointerLock(); } catch {}
+  }
   overlay.classList.toggle('is-hidden', !open);
   overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
   overlay.inert = !open;
   document.body.classList.toggle('ov-open', open);
   if (open) {
     renderPlay();
-    if (ready && play) {
+    if (ready && play && !inMultiplayerRoom) {
       try { play.focus({ preventScroll: true }); } catch (_) { /* ignore */ }
     }
   }
@@ -48,7 +57,7 @@ function setOpen(open) {
 if (play) {
   play.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (play.disabled) return;
+    if (play.disabled || inMultiplayerRoom) return;
     setOpen(false);
     window.dispatchEvent(new Event('game:start')); // синхронно, внутри жеста пользователя
     play.blur(); // чтобы Пробел (выстрел) не «нажимал» кнопку повторно
@@ -79,8 +88,33 @@ window.addEventListener('game:ready', () => {
 window.addEventListener('game:state', (e) => {
   const s = e && e.detail && e.detail.state;
   if (s) state = s;
-  if (isRunning()) setOpen(false);
+  if (inMultiplayerRoom) {
+    if (multiplayerPhase === 'playing') setOpen(false);
+    else setOpen(true);
+  } else if (isRunning()) setOpen(false);
   else renderPlay();
+});
+
+function updateMultiplayerOverlay(room) {
+  inMultiplayerRoom = !!room;
+  multiplayerPhase = room?.phase || 'lobby';
+  renderPlay();
+  if (multiplayerPhase === 'playing') setOpen(false);
+  else if (!xrActive) setOpen(true);
+}
+
+window.addEventListener('mp:room:joined', e => updateMultiplayerOverlay(e.detail?.room));
+window.addEventListener('mp:room:update', e => updateMultiplayerOverlay(e.detail?.room));
+window.addEventListener('mp:room:left', () => updateMultiplayerOverlay(null));
+window.addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected' && inMultiplayerRoom) updateMultiplayerOverlay(null);
+});
+window.addEventListener('mp:resume', () => {
+  if (inMultiplayerRoom && multiplayerPhase === 'playing') {
+    setOpen(false);
+    // Это событие вызывается непосредственно в обработчике клика для Pointer Lock.
+    window.dispatchEvent(new Event('mp:focus-controls'));
+  }
 });
 
 window.addEventListener('game:xr', (e) => {

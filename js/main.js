@@ -5,7 +5,7 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-roomfix-20261016c';
 import { createSharedArena } from './multiplayer-arena.js';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
@@ -134,6 +134,46 @@ try { best = Number(localStorage.getItem('vr-tir-best')) || 0; } catch {}
 
 const multiplier = () => Math.min(4, 1 + Math.floor(combo / 5));
 const scoring = () => state === 'play' && !sharedArena.active;
+
+// Сетевой матч не должен запускать локальные таймеры и меню одиночного тира.
+let lastMultiplayerPhase = null;
+addEventListener('mp:room:joined', e => {
+  if (!e.detail?.room) return;
+  if (state === 'play' || state === 'countdown') {
+    setState('menu');
+    clearTargets();
+    music.stop();
+  }
+  lastMultiplayerPhase = e.detail.room.phase;
+  menu.mesh.visible = false;
+});
+addEventListener('mp:room:update', e => {
+  const phase = e.detail?.room?.phase;
+  if (!phase) return;
+  if (phase === 'playing' && lastMultiplayerPhase !== 'playing') {
+    arsenal.resetAll();
+    clearTargets();
+    music.start();
+    music.setIntensity(0.35);
+    mk.send('S');
+  } else if (phase === 'finished' && lastMultiplayerPhase === 'playing') {
+    music.stop();
+    sfx.end();
+    mk.send('E');
+  }
+  lastMultiplayerPhase = phase;
+  menu.mesh.visible = false;
+});
+addEventListener('mp:room:left', () => {
+  lastMultiplayerPhase = null;
+  music.stop();
+});
+addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected') {
+    lastMultiplayerPhase = null;
+    music.stop();
+  }
+});
 
 function setState(s) {
   state = s;
@@ -626,6 +666,11 @@ canvas.addEventListener('pointerdown', (e) => {
   if (renderer.xr.isPresenting) return;
   if (e.button === 2) { aimHeld = true; return; }
   if (e.button !== 0) return;
+  // Первый клик после начала сетевого матча захватывает мышь, не тратя патрон.
+  if (sharedArena.playing && !locked()) {
+    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+    return;
+  }
   pcTrigger.held = true;
   pcTrigger.first = true;
   if (locked()) {
@@ -648,8 +693,22 @@ document.addEventListener('mousemove', (e) => {
   pitch = rand.clamp(pitch - e.movementY * sens, -1.4, 1.4);
 });
 
+const mpControlsTip = document.getElementById('mp-controls-tip');
+function updateMultiplayerControlsTip() {
+  if (mpControlsTip) mpControlsTip.hidden = !sharedArena.playing || locked() || renderer.xr.isPresenting;
+}
 document.addEventListener('pointerlockchange', () => {
   document.body.classList.toggle('locked', locked());
+  updateMultiplayerControlsTip();
+});
+addEventListener('mp:room:update', updateMultiplayerControlsTip);
+addEventListener('mp:room:joined', updateMultiplayerControlsTip);
+addEventListener('mp:room:left', updateMultiplayerControlsTip);
+addEventListener('mp:status', updateMultiplayerControlsTip);
+addEventListener('mp:focus-controls', () => {
+  if (sharedArena.playing && !renderer.xr.isPresenting && !locked()) {
+    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+  }
 });
 
 let wheelAt = 0;
