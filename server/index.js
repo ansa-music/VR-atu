@@ -161,7 +161,7 @@ const arenaTimer = setInterval(() => {
   }
 }, 100);
 
-server.listen(PORT, () => console.log('VR-ATU multiplayer server listening on', PORT));
+server.listen(PORT, () => console.log('VR-ATU multiplayer server listening on', server.address().port));
 function shutdown() {
   clearInterval(timer);
   clearInterval(arenaTimer);
