@@ -61,8 +61,9 @@ function handle(player, msg) {
       rooms.start(room, player.id);
       clearArena(room);
       tickArena(room, Date.now());
-      broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+      // Сначала переводим всех в состояние игры, затем публикуем первые мишени.
       broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+      broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
       break;
     case 'player:shot': {
       if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
@@ -152,6 +153,10 @@ const timer = setInterval(() => {
 
 const arenaTimer = setInterval(() => {
   for (const room of rooms.rooms.values()) {
+    // Раунд завершается с точностью примерно 100 мс, а не с задержкой до 15 секунд.
+    const previous = room.phase;
+    rooms.tick(room);
+    if (previous !== room.phase) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
     if (tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
   }
 }, 100);
