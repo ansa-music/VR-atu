@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = (await readFile(new URL('../js/multiplayer-ui.js', import.meta.url), 'utf8'))
-  .replace(/^import .*server-config\.js';/m, "const MULTIPLAYER_SERVER_URL = 'wss://vr-atu-multiplayer.onrender.com';");
+  .replace(/^import .*server-config\.js(?:\?[^']*)?';/m, "const MULTIPLAYER_SERVER_URL = 'wss://vr-atu-multiplayer.onrender.com';");
 
 function fakeElement(id) {
   const handlers = new Map();
