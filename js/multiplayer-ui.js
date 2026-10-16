@@ -16,6 +16,7 @@ function render() {
   if (!room) {
     panel.hidden = false;
     list.textContent = '';
+    if ($('mp-ranking')) $('mp-ranking').textContent = '';
     codeView.textContent = '—';
     start.hidden = true;
     return;
@@ -55,5 +56,18 @@ window.addEventListener('mp:room:joined', e => { myId = e.detail.playerId; room 
 window.addEventListener('mp:room:update', e => { room = e.detail.room; render(); });
 window.addEventListener('mp:room:left', () => { room = null; myId = null; render(); showStatus('Вы вышли из комнаты'); });
 window.addEventListener('mp:status', e => { if (e.detail.state === 'disconnected') { room = null; render(); showStatus('Соединение прервано'); } });
+window.addEventListener('mp:scoreboard', e => {
+  const box = $('mp-ranking');
+  if (!box) return;
+  const { players, phase, remaining } = e.detail;
+  const title = document.createElement('strong');
+  title.textContent = phase === 'playing' ? 'Сетевой раунд · ' + remaining + ' сек.' : 'Результаты';
+  const ranking = players.map((p, i) => {
+    const item = document.createElement('div');
+    item.textContent = (i + 1) + '. ' + p.name + ' — ' + p.score + ' очков (' + p.hits + '/' + p.shots + ')';
+    return item;
+  });
+  box.replaceChildren(title, ...ranking);
+});
 window.addEventListener('mp:error', e => { showStatus('Ошибка сети: ' + (e.detail.code || 'UNKNOWN')); });
 render();
