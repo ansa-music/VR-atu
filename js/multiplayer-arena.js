@@ -38,7 +38,7 @@ export function createSharedArena(scene) {
     serverOffset = room.serverTime - Date.now();
     if (phase !== 'playing' || mode === 'pvp') clear();
     window.dispatchEvent(new CustomEvent('mp:scoreboard', { detail: {
-      players: [...players].sort((a, b) => b.score - a.score), phase,
+      players: [...players].sort((a, b) => b.score - a.score), phase, mode,
       remaining: Math.max(0, Math.ceil(((endsAt || 0) - Date.now() - serverOffset) / 1000)),
     } }));
   }

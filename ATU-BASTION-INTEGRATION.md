@@ -65,7 +65,7 @@ shield expiry and shooting players behind cover with two connected clients.
 
 ## Integration follow-up after syncing the parallel session
 
-The support branch includes the PvP integration through `9d2c972`. All 41 tests
+The support branch includes the PvP integration through `92bad21`. All 41 tests
 pass, including four added PvP tests: spawn shield expiry, cover occlusion,
 kill/death/respawn accounting and friendly-fire/dead-shooter rejection. Existing
 classic target-network tests now request `mode: 'targets'` explicitly because
@@ -79,9 +79,8 @@ Remaining integration points for the map/session owner:
   radius as the client. Do not treat this client fix as server anti-cheat.
 - Random spawn selection does not reserve slots and can place teammates at the
   same slot; use room occupancy when choosing a spawn if overlaps matter.
-- In the synced UI, `mp-game-mode` is present but the create-room payload still
-  needs its selected mode wired into `options.mode`. Keep the classic browser
-  smoke scenario explicit about its mode as well.
+- The parallel session has now wired `mp-game-mode` into `options.mode`. Keep
+  the classic browser smoke scenario explicit about its mode as well.
 - The browser smoke currently checks the older ammo/ADS HUD; adapt its assertions
   to the PvP HUD before claiming a complete browser PvP test.
 

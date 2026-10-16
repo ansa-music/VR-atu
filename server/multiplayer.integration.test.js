@@ -79,7 +79,7 @@ test('two browsers join room 123 and receive server match start and targets', { 
     guest = await connect(port);
     host.send('room:create', {
       name: 'Хозяин',
-      options: { mode: 'targets', code: '123', title: 'Тестовый тир', maxPlayers: 2, durationSec: 30 },
+      options: { code: '123', title: 'Тестовый тир', maxPlayers: 2, durationSec: 30, mode: 'targets' },
     });
     const created = await host.waitFor('room:joined');
     assert.equal(created.room.code, '123');
