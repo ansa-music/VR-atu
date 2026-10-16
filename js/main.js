@@ -5,7 +5,7 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-roomfix-20261016c';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-mpnav-20261016d';
 import { createSharedArena } from './multiplayer-arena.js';
 import { CombatController, shotSpread } from './combat.js';
 import { tintWeapon, tintCharacter, skinId } from './skins.js';
@@ -460,15 +460,19 @@ let yaw = 0, pitch = 0;
 const ndc = new THREE.Vector2();
 const locked = () => document.pointerLockElement === canvas;
 
-canvas.addEventListener('pointerdown', (e) => {
+// mousedown fires for every mouse button, including LMB while RMB is held.
+canvas.addEventListener('mousedown', (e) => {
   if (renderer.xr.isPresenting || e.button !== 0) return;
   // Первый клик после начала сетевого матча захватывает мышь, не тратя патрон.
-  if (sharedArena.playing && !locked()) {
+  if (sharedArena.playing && !locked() && !isAiming) {
     try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
     return;
   }
-  if (locked()) {
+  if (locked() || isAiming) {
     fireFromScreen(CENTER);
+    if (!locked()) {
+      try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+    }
   } else {
     // без захвата мыши стреляем по курсору и пробуем захватить мышь для обзора
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
@@ -489,6 +493,7 @@ function updateMultiplayerControlsTip() {
 }
 document.addEventListener('pointerlockchange', () => {
   document.body.classList.toggle('locked', locked());
+  if (!locked()) { keys.clear(); isAiming = false; isCrouching = false; }
   updateMultiplayerControlsTip();
 });
 addEventListener('mp:room:update', updateMultiplayerControlsTip);
@@ -521,8 +526,15 @@ addEventListener('game:start', () => {
 addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'ControlLeft' || e.code === 'KeyC') isCrouching = false; });
 addEventListener('blur', () => { keys.clear(); isAiming = false; isCrouching = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { if (e.button === 2 && !renderer.xr.isPresenting) isAiming = true; });
-addEventListener('pointerup', e => { if (e.button === 2) isAiming = false; });
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 2 || renderer.xr.isPresenting) return;
+  isAiming = true;
+  // Aiming can be the first action: capture the mouse before the first shot.
+  if (!locked()) {
+    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+  }
+});
+addEventListener('mouseup', e => { if (e.button === 2) isAiming = false; });
 
 // ---------- VR-контроллеры ----------
 function makeGun(color) {

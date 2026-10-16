@@ -49,3 +49,11 @@ test('invalid rays and inactive rounds do not award points', () => {
   room.phase = 'finished';
   assert.equal(shoot(room, player.id, { origin: [0, 0, 0], direction: [0, 0, -1] }, 2000).error, 'ROUND_NOT_ACTIVE');
 });
+
+test('expired targets cannot score between arena ticks', () => {
+  const { room, player } = makeRound();
+  room.targets.set('expired', { id: 'expired', type: 'gold', position: [0, 1.6, -3], radius: 0.37, expiresAt: 2000 });
+  const result = shoot(room, player.id, { origin: [0, 1.6, 0], direction: [0, 0, -1] }, 2000);
+  assert.equal(result.hit, false);
+  assert.equal(room.players.get(player.id).score, 0);
+});

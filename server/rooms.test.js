@@ -69,3 +69,19 @@ test('reject invalid requested code and constrain duration/capacity', () => {
   assert.equal(room.maxPlayers,8);
   assert.equal(room.durationSec,60);
 });
+
+test('finished room accepts newcomers and next round resets combos', () => {
+  let now = 1000;
+  const store = new RoomStore({ now: () => now });
+  const host = player(), guest = player();
+  const room = store.create(host, 'Host');
+  store.start(room, host.id);
+  assert.throws(() => store.join(room.code, guest, 'Guest'), /ROUND_IN_PROGRESS/);
+  room.players.get(host.id).combo = 19;
+  now = room.endsAt;
+  store.join(room.code, guest, 'Guest');
+  assert.equal(room.phase, 'finished');
+  store.start(room, host.id);
+  assert.equal(room.players.get(host.id).combo, 0);
+  assert.equal(room.players.size, 2);
+});

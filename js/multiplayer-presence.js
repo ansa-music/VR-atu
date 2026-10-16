@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MultiplayerClient } from './multiplayer.js?v=atu-roomfix-20261016c';
+import { MultiplayerClient } from './multiplayer.js?v=atu-mpnav-20261016d';
 import { createRemoteAvatar, skinId } from './skins.js';
 
 // Experimental network presence. Solo gameplay, scoring and targets remain LOCAL.
@@ -52,16 +52,19 @@ export function initializeMultiplayerPresence(scene, camera) {
     if (typeof url !== 'string' || !/^wss?:\/\//i.test(url)) return;
     client?.disconnect();
     clear();
-    client = new MultiplayerClient(url);
-    window.dispatchEvent(new CustomEvent('mp:transport', { detail: { send: (type, data) => client.send(type, data) } }));
+    const connection = new MultiplayerClient(url);
+    client = connection;
+    window.dispatchEvent(new CustomEvent('mp:transport', { detail: { send: (type, data) => client === connection && connection.send(type, data) } }));
     client.addEventListener('room:joined', e => {
+      if (client !== connection) return;
       roomUpdate();
       client.send('player:skin', { skin: skinId(window.vrAtuSelectedSkin) });
     });
-    client.addEventListener('room:update', roomUpdate);
-    client.addEventListener('room:left', clear);
-    client.addEventListener('status', e => { if (e.detail.state === 'disconnected') clear(); });
+    client.addEventListener('room:update', () => { if (client === connection) roomUpdate(); });
+    client.addEventListener('room:left', () => { if (client === connection) clear(); });
+    client.addEventListener('status', e => { if (client === connection && e.detail.state === 'disconnected') clear(); });
     client.addEventListener('player:pose', e => {
+      if (client !== connection) return;
       const p = e.detail;
       if (p.id === client.playerId) return;
       const avatar = ensure(p.id);
@@ -69,19 +72,31 @@ export function initializeMultiplayerPresence(scene, camera) {
       avatar.quaternion.fromArray(p.rotation);
       avatar.lastSeen = performance.now();
     });
-    const relay = type => client.addEventListener(type, e => window.dispatchEvent(new CustomEvent('mp:' + type, { detail: e.detail })));
+    const relay = type => connection.addEventListener(type, e => {
+      if (client === connection) window.dispatchEvent(new CustomEvent('mp:' + type, { detail: e.detail }));
+    });
     ['room:joined', 'room:update', 'room:left', 'targets:update', 'shot:result', 'error', 'status'].forEach(relay);
     try {
-      await client.connect();
+      await connection.connect();
+      if (client !== connection) return;
       if (action === 'create') client.createRoom(name, options);
       else client.joinRoom(code, name);
     } catch (error) {
+      if (client !== connection) return;
       window.dispatchEvent(new CustomEvent('mp:error', { detail: { code: 'CONNECTION_FAILED' } }));
     }
   });
   window.addEventListener('skin:changed', e => client?.send('player:skin', { skin: skinId(e.detail?.skin) }));
   window.addEventListener('mp:start-round', () => client?.startRound());
-  window.addEventListener('mp:leave', () => { client?.leaveRoom(); clear(); });
+  function disconnectRoom() {
+    const previous = client;
+    client = null; // Ignore delayed events from the connection we are closing.
+    previous?.disconnect();
+    clear();
+    window.dispatchEvent(new CustomEvent('mp:room:left', { detail: {} }));
+  }
+  window.addEventListener('mp:leave', disconnectRoom);
+  window.addEventListener('mp:cancel', disconnectRoom);
 
   return function update(now, dt) {
     if (client?.room && client.state === 'connected' && now - lastPublish >= 60) {

@@ -1,5 +1,4 @@
-// Standalone multiplayer transport. Not wired to the single-player game yet.
-// The WebSocket URL must point to a deployed VR-ATU server (wss:// on HTTPS).
+// WebSocket room transport shared by the desktop and WebXR clients.
 export class MultiplayerClient extends EventTarget {
   constructor(url) {
     super();
@@ -8,6 +7,7 @@ export class MultiplayerClient extends EventTarget {
     this.playerId = null;
     this.room = null;
     this.state = 'disconnected';
+    this.pendingConnection = null;
   }
 
   _emit(type, detail = {}) {
@@ -15,22 +15,35 @@ export class MultiplayerClient extends EventTarget {
   }
 
   connect() {
-    if (this.socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(this.socket.readyState)) {
-      return Promise.resolve();
-    }
-    const socket = new WebSocket(this.url);
+    if (this.pendingConnection) return this.pendingConnection;
+    if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve();
+    let socket;
+    try { socket = new WebSocket(this.url); }
+    catch (error) { return Promise.reject(error); }
     this.socket = socket;
     this.state = 'connecting';
     this._emit('status', { state: this.state });
-    return new Promise((resolve, reject) => {
+    const attempt = new Promise((resolve, reject) => {
       let settled = false;
+      const finish = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timeout = setTimeout(() => {
+        finish(new Error('WebSocket connection timed out'));
+        socket.close();
+      }, 15000);
       socket.addEventListener('open', () => {
+        if (this.socket !== socket) return;
         this.state = 'connected';
         this._emit('status', { state: this.state });
-        settled = true;
-        resolve();
+        finish();
       });
       socket.addEventListener('message', event => {
+        if (this.socket !== socket) return;
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
         if (!message || typeof message.type !== 'string') return;
@@ -40,17 +53,24 @@ export class MultiplayerClient extends EventTarget {
         this._emit(message.type, message);
       });
       socket.addEventListener('error', () => {
-        if (!settled) { settled = true; reject(new Error('WebSocket connection failed')); }
-        this._emit('error', { code: 'NETWORK_ERROR' });
+        finish(new Error('WebSocket connection failed'));
+        if (this.socket === socket) this._emit('error', { code: 'NETWORK_ERROR' });
       });
       socket.addEventListener('close', () => {
-        if (!settled) { settled = true; reject(new Error('WebSocket closed before connecting')); }
+        finish(new Error('WebSocket closed before connecting'));
         if (this.socket !== socket) return;
+        this.socket = null;
         this.state = 'disconnected';
         this.room = null;
+        this.playerId = null;
         this._emit('status', { state: this.state });
       });
     });
+    const pending = attempt.finally(() => {
+      if (this.pendingConnection === pending) this.pendingConnection = null;
+    });
+    this.pendingConnection = pending;
+    return pending;
   }
 
   send(type, data = {}) {

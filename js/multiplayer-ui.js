@@ -2,8 +2,12 @@ import { MULTIPLAYER_SERVER_URL } from './server-config.js?v=atu-roomfix-2026101
 
 // Совместимо со старой разметкой, оставшейся в кеше браузера.
 const $ = id => document.getElementById(id);
-const serverUrl = MULTIPLAYER_SERVER_URL.trim();
+const localDevelopment = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const serverUrl = localDevelopment
+  ? (location.protocol === 'https:' ? '' : 'ws://' + location.hostname + ':8080')
+  : MULTIPLAYER_SERVER_URL.trim();
 let room = null, myId = null, mode = 'create', connecting = false;
+let attemptId = 0;
 
 const status = $('mp-status');
 const panel = $('mp-panel');
@@ -85,12 +89,15 @@ function render() {
     guestHint.hidden = isHost || isPlaying;
     guestHint.textContent = room.phase === 'finished' ? 'Ожидаем новый матч от создателя комнаты.' : 'Ожидаем, когда создатель комнаты начнёт матч.';
   }
-  showStatus(isPlaying ? 'Матч начался. Играйте на арене. Чтобы вернуться, нажмите «?».'
+  showStatus(isPlaying ? 'Матч начался. Играйте на арене. Меню: Esc или кнопка «← Меню». Матч продолжается, пока меню открыто.'
     : room.phase === 'finished' ? (isHost ? 'Матч завершён. Можно начать новый.' : 'Матч завершён. Ожидаем создателя.')
     : (isHost ? 'Комната готова. Нажмите «Начать матч».' : 'Вы подключились. Ожидаем запуска матча создателем.'));
 }
 function setBusy(busy) {
   connecting = busy;
+  if (!busy) attemptId++;
+  const cancel = $('mp-cancel');
+  if (cancel) cancel.hidden = !busy;
   if (createButton) createButton.disabled = busy;
   if (joinButton) joinButton.disabled = busy;
 }
@@ -118,6 +125,7 @@ function submit(action) {
     return;
   }
   setBusy(true);
+  const currentAttempt = ++attemptId;
   showStatus('Подключаемся к серверу…');
   window.dispatchEvent(new CustomEvent('mp:configure', {detail: {
     action, url, code: joinCode, name: nameField?.value.trim() || '',
@@ -130,7 +138,8 @@ function submit(action) {
   }}));
   // Не оставлять кнопки навсегда заблокированными при ошибках сети.
   window.setTimeout(() => {
-    if (connecting && !room) {
+    if (currentAttempt === attemptId && connecting && !room) {
+      window.dispatchEvent(new Event('mp:cancel'));
       setBusy(false);
       showStatus('Ответ сервера задерживается. Попробуйте ещё раз.');
     }
@@ -147,6 +156,11 @@ start?.addEventListener('click', () => {
   window.dispatchEvent(new Event('mp:start-round'));
 });
 $('mp-resume')?.addEventListener('click', () => window.dispatchEvent(new Event('mp:resume')));
+$('mp-cancel')?.addEventListener('click', () => {
+  window.dispatchEvent(new Event('mp:cancel'));
+  setBusy(false);
+  showStatus('Подключение отменено. Можно попробовать снова.');
+});
 $('mp-leave')?.addEventListener('click', () => window.dispatchEvent(new Event('mp:leave')));
 $('mp-copy-code')?.addEventListener('click', async () => {
   if (!room) return;

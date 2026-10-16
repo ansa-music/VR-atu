@@ -42,7 +42,8 @@ export class RoomStore {
   }
 
   addPlayer(room, player, name) {
-    if (room.phase !== 'lobby') throw new Error('ROUND_IN_PROGRESS');
+    this.tick(room);
+    if (room.phase === 'playing') throw new Error('ROUND_IN_PROGRESS');
     if (room.players.size >= room.maxPlayers) throw new Error('ROOM_FULL');
     room.players.set(player.id, { id: player.id, name: safeName(name), score: 0, shots: 0, hits: 0, combo: 0, ready: false, skin: 'cyan' });
     player.roomCode = room.code;
@@ -74,7 +75,7 @@ export class RoomStore {
     room.phase = 'playing';
     room.startedAt = this.now();
     room.endsAt = room.startedAt + room.durationSec * 1000;
-    for (const p of room.players.values()) { p.score = 0; p.shots = 0; p.hits = 0; }
+    for (const p of room.players.values()) { p.score = 0; p.shots = 0; p.hits = 0; p.combo = 0; }
     return room;
   }
 
