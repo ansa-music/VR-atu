@@ -59,7 +59,7 @@ export class MultiplayerClient extends EventTarget {
     return true;
   }
 
-  createRoom(name) { return this.send('room:create', { name }); }
+  createRoom(name, options = {}) { return this.send('room:create', { name, options }); }
   joinRoom(code, name) { return this.send('room:join', { code, name }); }
   leaveRoom() { return this.send('room:leave'); }
   startRound() { return this.send('round:start'); }
