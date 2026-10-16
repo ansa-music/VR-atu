@@ -66,12 +66,17 @@ function render() {
   const title = $('mp-room-title');
   if (title) title.textContent = room.title || 'Комната ATU';
   const info = $('mp-room-info');
-  if (info) info.textContent = (room.players?.length || 0) + '/' + (room.maxPlayers || 8) +
+  if (info) info.textContent = (room.mode === 'pvp' ? 'ATU BASTION · PvP · ' : 'Общие мишени · ') +
+    (room.players?.length || 0) + '/' + (room.maxPlayers || 8) +
     ' игроков · ' + (room.durationSec || 60) + ' секунд';
   if (players) {
     players.replaceChildren(...(room.players || []).map(p => {
       const row = document.createElement('div');
-      row.textContent = (p.id === room.hostId ? '★ ' : '') + p.name + (p.id === myId ? ' (вы)' : '');
+      const team = room.mode === 'pvp' ? (p.team === 'alpha' ? '🔵 ' : '🟠 ') : '';
+      const state = room.mode === 'pvp' && room.phase === 'playing'
+        ? (p.alive ? ' · ' + p.health + ' HP' : ' · возрождается') : '';
+      row.textContent = team + (p.id === room.hostId ? '★ ' : '') +
+        p.name + (p.id === myId ? ' (вы)' : '') + state;
       return row;
     }));
   }
@@ -134,6 +139,7 @@ function submit(action) {
       title: $('mp-title')?.value.trim() || 'Комната ATU',
       maxPlayers: Number($('mp-max-players')?.value || 8),
       durationSec: Number($('mp-duration')?.value || 60),
+      mode: $('mp-game-mode')?.value === 'targets' ? 'targets' : 'pvp',
     } : {},
   }}));
   // Не оставлять кнопки навсегда заблокированными при ошибках сети.
@@ -195,12 +201,15 @@ window.addEventListener('mp:status', e => {
 window.addEventListener('mp:scoreboard', e => {
   const box = $('mp-ranking');
   if (!box) return;
-  const {players: standings = [], phase, remaining} = e.detail;
+  const {players: standings = [], phase, remaining, mode: matchMode} = e.detail;
   const headline = document.createElement('strong');
   headline.textContent = phase === 'playing' ? 'До конца раунда: ' + remaining + ' с' : 'Таблица результатов';
   const rows = standings.map((p, i) => {
     const row = document.createElement('div');
-    row.textContent = (i + 1) + '. ' + p.name + ' — ' + p.score + ' очков';
+    const team = matchMode === 'pvp' ? (p.team === 'alpha' ? '🔵 ' : '🟠 ') : '';
+    row.textContent = team + (i + 1) + '. ' + p.name + ' — ' +
+      (matchMode === 'pvp' ? (p.kills || 0) + ' убийств · ' + (p.deaths || 0) + ' смертей'
+        : p.score + ' очков');
     return row;
   });
   box.replaceChildren(headline, ...rows);
