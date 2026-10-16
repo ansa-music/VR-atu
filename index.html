@@ -300,6 +300,11 @@
         <b class="r-t">60 секунд</b> · <b class="r-c">кристалл +1</b> · <b class="r-g">золотой +3</b> · <b class="r-p">бомба −5</b> · <b class="r-m">серия из 5 попаданий = множитель до x4</b>
       </p>
 
+      <section id="skin-section" aria-label="Настройка внешнего вида" style="max-width:680px;margin:18px auto 0;padding:16px 20px;border:1px solid rgba(255,210,63,.28);border-radius:18px;background:rgba(8,12,35,.78);text-align:left">
+        <label for="skin-select" style="display:block;font-weight:700;color:#ffd23f;margin-bottom:8px">СКИН ОРУЖИЯ И ПЕРСОНАЖА</label>
+        <select id="skin-select" style="width:100%;padding:12px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit"></select>
+        <p style="color:#a9b6e6;font-size:13px;margin-bottom:0">Выбран: <span id="skin-description">CYBER ICE</span>. Скин сохраняется на этом устройстве.</p>
+      </section>
       <section id="mp-section" aria-label="Мультиплеер, экспериментальная версия">
         <h2>МУЛЬТИПЛЕЕР · BETA</h2>
         <p style="font-size:13px;color:#a9b6e6">Экспериментальный мультиплеер: общие мишени, сетевые очки и присутствие игроков. Для игры нужен отдельный сервер. Нужен отдельный WebSocket-сервер.</p>
@@ -331,6 +336,7 @@
   <div id="crosshair"></div>
 
   <script type="module" src="js/overlay.js"></script>
+  <script type="module" src="js/skin-ui.js"></script>
   <script type="module" src="js/main.js"></script>
   <script type="module" src="js/multiplayer-ui.js"></script>
 </body>
