@@ -38,4 +38,4 @@
 
 ## Технологии
 
-Three.js 0.160 (через importmap с CDN), WebXR, Web Audio, Web Serial, Arduino.
+Three.js 0.160 (лежит в папке `vendor/`, интернет для игры не нужен), WebXR, Web Audio, Web Serial, Arduino.
