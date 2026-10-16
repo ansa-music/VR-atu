@@ -59,7 +59,7 @@ export function initializeMultiplayerPresence(scene, camera) {
       a.health = p.health ?? 100;
       a.alive = p.alive !== false;
       a.model.setHealth(a.health, a.alive, now < (p.invulnerableUntil || 0));
-      a.model.group.visible = a.alive && (client.room.mode !== 'pvp' || client.room.phase === 'playing');
+      if (client.room.mode === 'pvp' && client.room.phase !== 'playing') a.model.group.visible = false;
       if (Array.isArray(p.spawn) && p.spawnSeq && a.spawnSeq !== p.spawnSeq) {
         a.spawnSeq = p.spawnSeq;
         a.target.fromArray(p.spawn);
@@ -108,8 +108,16 @@ export function initializeMultiplayerPresence(scene, camera) {
         a.initialized = true;
       }
       a.lastPoseAt = a.lastSeen = performance.now();
-      a.model.group.visible = member?.alive !== false &&
-        (connection.room?.mode !== 'pvp' || connection.room?.phase === 'playing');
+      if (connection.room?.mode === 'pvp' && connection.room?.phase !== 'playing') a.model.group.visible = false;
+    });
+
+    // Remote muzzle/arm recoil is triggered by authoritative shot results,
+    // including misses, rather than guessing from head movement.
+    connection.addEventListener('shot:result', e => {
+      if (client !== connection) return;
+      const id = e.detail?.playerId;
+      if (!id || id === connection.playerId) return;
+      participants.get(id)?.model.fire();
     });
 
     // Keep all existing high-level UI and PvP listeners working.
