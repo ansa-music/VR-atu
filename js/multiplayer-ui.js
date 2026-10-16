@@ -1,4 +1,4 @@
-import { MULTIPLAYER_SERVER_URL } from './server-config.js';
+import { MULTIPLAYER_SERVER_URL } from './server-config.js?v=atu-roomfix-20261016c';
 
 // Совместимо со старой разметкой, оставшейся в кеше браузера.
 const $ = id => document.getElementById(id);
