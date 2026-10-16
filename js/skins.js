@@ -73,3 +73,24 @@ export function createRemoteAvatar(id = DEFAULT_SKIN) {
   }
   return { group, materials: [shell, armor, glow, visor] };
 }
+
+export function tintCharacter(character, id) {
+  const root = character?.group;
+  if (!root) return;
+  const skin = SKINS[skinId(id)];
+  root.traverse(child => {
+    if (!child.isMesh || !child.material) return;
+    if (!child.userData.characterBaseMaterial) child.userData.characterBaseMaterial = child.material.clone();
+    const original = child.userData.characterBaseMaterial;
+    if (child.userData.characterOwnedMaterial) child.material.dispose();
+    const material = original.clone();
+    if (material.emissive && material.emissive.getHex() !== 0) {
+      material.emissive.setHex(skin.color);
+      material.color?.setHex(skin.color);
+    } else if (material.metalness >= 0.45 && material.color) {
+      material.color.setHex(skin.metal);
+    }
+    child.material = material;
+    child.userData.characterOwnedMaterial = true;
+  });
+}
