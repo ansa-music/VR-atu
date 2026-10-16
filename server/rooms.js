@@ -35,7 +35,8 @@ export class RoomStore {
     const duration = Number(options.durationSec);
     const room = { code, hostId: player.id, phase: 'lobby', players: new Map(), startedAt: null, endsAt: null,
       title: safeName(options.title || 'Комната ATU'), maxPlayers: Number.isInteger(limit) && limit >= 2 && limit <= 8 ? limit : 8,
-      durationSec: [30, 60, 90, 120].includes(duration) ? duration : 60 };
+      durationSec: [30, 60, 90, 120].includes(duration) ? duration : 60,
+      mode: options.mode === 'targets' ? 'targets' : 'pvp' };
     this.rooms.set(code, room);
     this.addPlayer(room, player, name);
     return room;
@@ -45,7 +46,13 @@ export class RoomStore {
     this.tick(room);
     if (room.phase === 'playing') throw new Error('ROUND_IN_PROGRESS');
     if (room.players.size >= room.maxPlayers) throw new Error('ROOM_FULL');
-    room.players.set(player.id, { id: player.id, name: safeName(name), score: 0, shots: 0, hits: 0, combo: 0, ready: false, skin: 'cyan' });
+    const alphaCount=[...room.players.values()].filter(p=>p.team==='alpha').length;
+    const bravoCount=room.players.size-alphaCount;
+    const team = alphaCount <= bravoCount ? 'alpha' : 'bravo';
+    room.players.set(player.id, {
+      id:player.id,name:safeName(name),team,score:0,shots:0,hits:0,kills:0,deaths:0,
+      combo:0,ready:false,skin:'cyan',health:100,alive:true,spawn:null,spawnSeq:0,
+    });
     player.roomCode = room.code;
     return room;
   }
@@ -88,7 +95,7 @@ export class RoomStore {
     this.tick(room);
     return {
       code: room.code, hostId: room.hostId, phase: room.phase,
-      title: room.title, maxPlayers: room.maxPlayers, durationSec: room.durationSec,
+      title: room.title, maxPlayers: room.maxPlayers, durationSec: room.durationSec, mode: room.mode,
       serverTime: this.now(), startedAt: room.startedAt, endsAt: room.endsAt,
       players: [...room.players.values()].map(p => ({ ...p })),
     };
