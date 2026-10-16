@@ -13,6 +13,15 @@ export class CombatController {
     this.recoil = 0;
     this.shotIndex = 0;
   }
+  reset() {
+    this.ammo = this.capacity;
+    this.reserve = 144;
+    this.reloading = false;
+    this.reloadUntil = 0;
+    this.lastShot = -Infinity;
+    this.recoil = 0;
+    this.shotIndex = 0;
+  }
   fire() {
     const t = this.now();
     if (this.reloading) return { ok: false, reason: 'reloading' };
