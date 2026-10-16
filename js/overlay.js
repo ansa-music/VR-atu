@@ -32,6 +32,10 @@ function renderPlay() {
 
 function setOpen(open) {
   if (!overlay) return;
+  // Возвращаем курсор, когда открываем лобби после матча.
+  if (open && document.pointerLockElement && document.exitPointerLock) {
+    try { document.exitPointerLock(); } catch {}
+  }
   overlay.classList.toggle('is-hidden', !open);
   overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
   overlay.inert = !open;
