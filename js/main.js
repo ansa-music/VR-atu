@@ -10,6 +10,11 @@ const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
 const emit = (name, detail) => dispatchEvent(new CustomEvent(name, { detail }));
 
+// оружие, персонаж и графика: если модуль не загрузился, игра работает со старой графикой
+const load = (path) => import(path).catch((e) => { console.warn('Модуль не загружен:', path, e); return {}; });
+const [weaponMod, charMod, gfxMod] = await Promise.all([load('./weapon.js'), load('./character.js'), load('./graphics.js')]);
+const safeCall = (fn, ...args) => { try { return fn ? fn(...args) : null; } catch (e) { console.warn(e); return null; } };
+
 const ROUND_TIME = 60;
 const MAX_TARGETS = 14;
 const COLORS = [0x3ec5ff, 0x7c5cff, 0x34e89e, 0xff7ad9];
@@ -37,6 +42,11 @@ rig.add(camera);
 scene.add(rig);
 
 const env = buildEnvironment(scene);
+const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
+
+// тень игрока на полу
+const shadowBlob = safeCall(charMod.createShadowBlob);
+if (shadowBlob) scene.add(shadowBlob);
 const fx = createFx(scene);
 
 const board = createScoreboard();
@@ -160,16 +170,20 @@ function spawnTarget() {
   const r = Math.random();
   const type = r < 0.12 ? 'gold' : r < 0.25 ? 'bomb' : 'normal';
   const color = type === 'gold' ? 0xffd23f : type === 'bomb' ? 0x330a0a : COLORS[(Math.random() * COLORS.length) | 0];
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    emissive: type === 'bomb' ? 0xff0022 : color,
-    emissiveIntensity: type === 'gold' ? 0.5 : 0.35,
-    roughness: type === 'gold' ? 0.25 : 0.4,
-    metalness: type === 'gold' ? 0.6 : 0.1,
-    flatShading: true,
-  });
-  const t = new THREE.Mesh(targetGeo, mat);
-  if (type === 'bomb') t.add(new THREE.Mesh(ringGeo, ringMat));
+  let t = safeCall(gfxMod.createTargetVisual, type, type === 'bomb' ? 0xff2244 : color);
+  if (!t?.isMesh || !t.material) {
+    // запасной вид мишени
+    const mat = new THREE.MeshStandardMaterial({
+      color,
+      emissive: type === 'bomb' ? 0xff0022 : color,
+      emissiveIntensity: type === 'gold' ? 0.5 : 0.35,
+      roughness: type === 'gold' ? 0.25 : 0.4,
+      metalness: type === 'gold' ? 0.6 : 0.1,
+      flatShading: true,
+    });
+    t = new THREE.Mesh(targetGeo, mat);
+    if (type === 'bomb') t.add(new THREE.Mesh(ringGeo, ringMat));
+  }
 
   // появление по дуге перед игроком, куда бы он ни смотрел
   const ang = Math.atan2(fwd.x, -fwd.z) + rand.degToRad(rand.randFloatSpread(100));
@@ -309,8 +323,23 @@ function setRayFromController(c) {
 function fireFromScreen(ndc) {
   camera.updateMatrixWorld(true);
   raycaster.setFromCamera(ndc, camera);
-  const from = new THREE.Vector3(0.25, -0.3, -0.5).applyMatrix4(camera.matrixWorld);
+  let from;
+  if (vmWeapon?.muzzle && viewModel.visible) {
+    from = vmWeapon.muzzle.getWorldPosition(new THREE.Vector3());
+    safeCall(vmWeapon.fire);
+  } else {
+    from = new THREE.Vector3(0.25, -0.3, -0.5).applyMatrix4(camera.matrixWorld);
+  }
   fire(from, null);
+}
+
+// выстрел из контроллера: луч от контроллера, трассер — из дула бластера
+function fireFromController(c) {
+  setRayFromController(c);
+  const w = c.userData.weapon;
+  const from = w?.muzzle ? w.muzzle.getWorldPosition(new THREE.Vector3()) : raycaster.ray.origin.clone();
+  safeCall(w?.fire);
+  fire(from, c);
 }
 
 // выстрел кнопкой МК: в VR — из правого контроллера (или взглядом), на ПК — в прицел
@@ -319,8 +348,7 @@ function fireFromAim() {
     const c = controllers.find((k) => k.visible && k.userData.src?.handedness === 'right')
       || controllers.find((k) => k.visible);
     if (c) {
-      setRayFromController(c);
-      fire(raycaster.ray.origin.clone(), c);
+      fireFromController(c);
       return;
     }
   }
@@ -403,18 +431,45 @@ const controllers = [0, 1].map((i) => {
   const laser = new THREE.Mesh(laserGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 }));
   const dot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color }));
   dot.visible = false;
-  c.add(makeGun(color), laser);
-  c.userData = { color, laser, dot, src: null, turned: false };
-  c.addEventListener('connected', (e) => { c.userData.src = e.data; });
-  c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
-  c.addEventListener('selectstart', () => {
-    setRayFromController(c);
-    fire(raycaster.ray.origin.clone(), c);
+  const weapon = safeCall(weaponMod.createWeapon, { color });
+  c.add(weapon?.group || makeGun(color), laser);
+  c.userData = { color, laser, dot, src: null, turned: false, weapon, hand: null, wrist: null };
+  c.addEventListener('connected', (e) => {
+    c.userData.src = e.data;
+    // перчатка по реальной руке; на левой — наручный экран
+    const side = e.data.handedness === 'left' ? 'left' : 'right';
+    if (c.userData.hand) c.remove(c.userData.hand.group);
+    c.userData.hand = safeCall(charMod.createHand, { side, color });
+    if (c.userData.hand?.group) c.add(c.userData.hand.group);
+    if (c.userData.wrist) { c.remove(c.userData.wrist.group); c.userData.wrist = null; }
+    if (side === 'left') {
+      c.userData.wrist = safeCall(charMod.createWristHud);
+      if (c.userData.wrist?.group) c.add(c.userData.wrist.group);
+    }
   });
+  c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
+  c.addEventListener('selectstart', () => fireFromController(c));
   rig.add(c);
   scene.add(dot);
   return c;
 });
+
+// ПК: бластер и рука от первого лица в правом нижнем углу
+const viewModel = new THREE.Group();
+viewModel.rotation.set(0.03, 0.06, 0);
+camera.add(viewModel);
+// на узком экране бластер ближе к центру, чтобы не уходил за край
+function placeViewModel() {
+  const halfW = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect * 0.38;
+  viewModel.position.set(Math.min(0.17, halfW * 0.5), -0.17, -0.38);
+}
+placeViewModel();
+const vmWeapon = safeCall(weaponMod.createWeapon, { color: 0xff7ad9 });
+const vmArm = safeCall(charMod.createArm, { color: 0xff7ad9 });
+if (vmWeapon?.group) viewModel.add(vmWeapon.group);
+if (vmArm?.group) viewModel.add(vmArm.group);
+viewModel.visible = !!vmWeapon?.group;
+let isMoving = false;
 
 // лазер-указка: длина до ближайшей мишени
 function updateControllers() {
@@ -485,6 +540,7 @@ function updateMovement(dt) {
 
   if (move.lengthSq() > 1) move.normalize();
   const moving = move.lengthSq() > 0.0001;
+  isMoving = moving;
   if (moving) {
     rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt);
     rig.position.addScaledVector(right, move.x * WALK_SPEED * dt);
@@ -510,8 +566,12 @@ function follow(obj, dist, height, speed, dt) {
 }
 
 // после выхода из VR возвращаем камеру в «рост»
-renderer.xr.addEventListener('sessionstart', () => emit('game:xr', { active: true }));
+renderer.xr.addEventListener('sessionstart', () => {
+  viewModel.visible = false; // в шлеме оружие в руках, а не у камеры
+  emit('game:xr', { active: true });
+});
 renderer.xr.addEventListener('sessionend', () => {
+  viewModel.visible = !!vmWeapon?.group;
   camera.position.set(0, EYE_HEIGHT, 0);
   emit('game:xr', { active: false });
 });
@@ -565,7 +625,9 @@ renderer.setAnimationLoop(() => {
   updateTargets(dt, time);
   fx.update(dt);
   env.update(dt, time);
+  gfx?.update?.(dt, time);
   updateControllers();
+  updateCharacter(dt);
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
@@ -577,8 +639,27 @@ renderer.setAnimationLoop(() => {
 let ready = false;
 emit('game:state', { state });
 
+// оружие, перчатки, наручный экран и тень
+const wristInfo = { score: 0, timeLeft: 0, multiplier: 1, mk: false };
+function updateCharacter(dt) {
+  if (viewModel.visible) vmWeapon?.update?.(dt, { moving: isMoving });
+  wristInfo.score = score;
+  wristInfo.timeLeft = timeLeft;
+  wristInfo.multiplier = multiplier();
+  wristInfo.mk = mk.connected;
+  for (const c of controllers) {
+    const u = c.userData;
+    if (!c.visible) continue;
+    u.weapon?.update?.(dt, { moving: false });
+    u.hand?.update?.(dt);
+    u.wrist?.update?.(wristInfo);
+  }
+  if (shadowBlob) shadowBlob.position.set(headPos.x, 0.012, headPos.z);
+}
+
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  placeViewModel();
 });

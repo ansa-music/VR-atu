@@ -11,30 +11,129 @@ export function buildEnvironment(scene) {
   sun.position.set(3, 8, 2);
   scene.add(sun);
 
-  // Пол и сетка
+  // Глянцевый тёмный пол (блики от карты окружения) и светящаяся сетка
   const floor = new THREE.Mesh(
     new THREE.CircleGeometry(40, 64),
-    new THREE.MeshStandardMaterial({ color: 0x0d1330, roughness: 0.9 })
+    new THREE.MeshStandardMaterial({ color: 0x060914, roughness: 0.25, metalness: 0.6 })
   );
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
-  const grid = new THREE.GridHelper(80, 80, 0x3a5bff, 0x1b2550);
+  const grid = new THREE.GridHelper(80, 80, 0xff3aa8, 0x3ec5ff);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.45;
+  grid.material.depthWrite = false;
+  grid.material.toneMapped = false;
   grid.position.y = 0.002;
   scene.add(grid);
+
+  // радиальная текстура свечения (для пятен света на полу и горизонта)
+  const glowTex = (() => {
+    const s = 64, cv = document.createElement('canvas');
+    cv.width = cv.height = s;
+    const g = cv.getContext('2d');
+    const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.4, 'rgba(255,255,255,0.35)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, s, s);
+    return new THREE.CanvasTexture(cv);
+  })();
 
   // Неоновые колонны по кругу (общая геометрия, у каждой свой материал)
   const PILLARS = 16;
   const pillarGeo = new THREE.BoxGeometry(0.3, 6, 0.3);
   const pillarMats = [];
+  // металлические основания/капители и светящиеся пояса — инстансами
+  const metalMat = new THREE.MeshStandardMaterial({ color: 0x1a1f3a, metalness: 0.9, roughness: 0.3 });
+  const blocks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.7, 0.35, 0.7), metalMat, PILLARS * 2);
+  const bands = new THREE.InstancedMesh(new THREE.BoxGeometry(0.78, 0.06, 0.78),
+    new THREE.MeshBasicMaterial({ toneMapped: false }), PILLARS * 2);
+  const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(3, 3).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }), PILLARS);
+  const m4 = new THREE.Matrix4(), col = new THREE.Color();
   for (let i = 0; i < PILLARS; i++) {
     const mat = new THREE.MeshBasicMaterial();
     mat.color.setHSL(i / PILLARS, 0.8, 0.55);
     const a = (i / PILLARS) * Math.PI * 2;
+    const x = Math.cos(a) * 14, z = Math.sin(a) * 14;
     const pillar = new THREE.Mesh(pillarGeo, mat);
-    pillar.position.set(Math.cos(a) * 14, 3, Math.sin(a) * 14);
+    pillar.position.set(x, 3, z);
     scene.add(pillar);
     pillarMats.push(mat);
+    col.setHSL(i / PILLARS, 0.9, 0.6);
+    blocks.setMatrixAt(i * 2, m4.makeTranslation(x, 0.175, z));
+    blocks.setMatrixAt(i * 2 + 1, m4.makeTranslation(x, 6.1, z));
+    bands.setMatrixAt(i * 2, m4.makeTranslation(x, 0.38, z));
+    bands.setMatrixAt(i * 2 + 1, m4.makeTranslation(x, 5.9, z));
+    bands.setColorAt(i * 2, col);
+    bands.setColorAt(i * 2 + 1, col);
+    pools.setMatrixAt(i, m4.makeTranslation(x, 0.005, z));
+    pools.setColorAt(i, col);
   }
+  scene.add(blocks, bands, pools);
+
+  // ---- Силуэты города на горизонте (радиус 48–56, без тумана) ----
+  const winTex = (() => { // окна: тёмный фон, редкие огни
+    const cv = document.createElement('canvas');
+    cv.width = 32; cv.height = 64;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#0a0a1e';
+    g.fillRect(0, 0, 32, 64);
+    const cols = ['#3ec5ff', '#ff3aa8', '#ffd23f', '#7c5cff'];
+    for (let y = 2; y < 64; y += 4) for (let x = 2; x < 32; x += 4) {
+      if (Math.random() < 0.22) { g.fillStyle = cols[(Math.random() * 4) | 0]; g.fillRect(x, y, 2, 2); }
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.magFilter = THREE.NearestFilter;
+    return t;
+  })();
+  const BLD = 70;
+  const city = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ map: winTex, fog: false, toneMapped: false }), BLD);
+  const roofs = new THREE.InstancedMesh(new THREE.BoxGeometry(1.02, 0.12, 1.02),
+    new THREE.MeshBasicMaterial({ fog: false, toneMapped: false }), BLD);
+  const q = new THREE.Quaternion(), sc = new THREE.Vector3(), pv = new THREE.Vector3(), yAx = new THREE.Vector3(0, 1, 0);
+  let nb = 0;
+  for (let i = 0; i < BLD; i++) {
+    const a = (i / BLD) * Math.PI * 2 + Math.random() * 0.05;
+    let d = Math.abs(a - Math.PI * 1.5) % (Math.PI * 2);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    if (d < 0.22) continue; // не закрываем солнце
+    const r = 48 + Math.random() * 8, w = 2 + Math.random() * 3, h = 3 + Math.random() * 10;
+    q.setFromAxisAngle(yAx, -a);
+    pv.set(Math.cos(a) * r, h / 2, Math.sin(a) * r);
+    city.setMatrixAt(nb, m4.compose(pv, q, sc.set(w, h, w)));
+    pv.y = h;
+    roofs.setMatrixAt(nb, m4.compose(pv, q, sc.set(w, 1, w)));
+    roofs.setColorAt(nb, col.set(i % 3 === 0 ? 0xff3aa8 : 0x3ec5ff));
+    nb++;
+  }
+  city.count = roofs.count = nb;
+  city.frustumCulled = roofs.frustumCulled = false;
+  scene.add(city, roofs);
+
+  // ---- Светящаяся линия горизонта (цилиндр с градиентом) ----
+  const hzTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = 4; cv.height = 64;
+    const g = cv.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 0, 64);
+    grd.addColorStop(0, 'rgba(255,58,168,0)');
+    grd.addColorStop(0.85, 'rgba(255,58,168,0.5)');
+    grd.addColorStop(1, 'rgba(255,210,63,0.9)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 4, 64);
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const horizon = new THREE.Mesh(new THREE.CylinderGeometry(58, 58, 10, 96, 1, true),
+    new THREE.MeshBasicMaterial({ map: hzTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.BackSide, toneMapped: false }));
+  horizon.position.y = 5;
+  horizon.frustumCulled = false;
+  scene.add(horizon);
 
   // Звёзды: верхняя полусфера радиуса 80, y >= 5
   const STARS = 1500, R = 80;
