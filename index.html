@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VR Тир</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #070b1a; font-family: system-ui, sans-serif; }
+    canvas { display: block; cursor: crosshair; }
+    #info {
+      position: absolute; top: 12px; left: 12px; max-width: 340px;
+      padding: 10px 14px; border-radius: 10px;
+      color: #fff; background: rgba(0, 0, 0, .45); font-size: 14px; line-height: 1.45;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="info">
+    <b>VR Тир</b><br>
+    Сбивай кристаллы 60 секунд: обычный +1, золотой +3, бомба −5.<br>
+    VR: курок контроллера. ПК: клик мышью.<br>
+    Выстрели в панель «СТАРТ», чтобы начать.
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
