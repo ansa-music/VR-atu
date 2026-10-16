@@ -28,7 +28,7 @@ export class RoomStore {
 
   create(player, name, options = {}) {
     const requested = String(options.code ?? '').trim();
-    if (requested && !/^\\d{3}$/.test(requested)) throw new Error('INVALID_CODE');
+    if (requested && !/^\d{3}$/.test(requested)) throw new Error('INVALID_CODE');
     const code = requested || makeCode(this.rooms);
     if (this.rooms.has(code)) throw new Error('CODE_TAKEN');
     const limit = Number(options.maxPlayers);
