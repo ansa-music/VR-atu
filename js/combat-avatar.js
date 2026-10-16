@@ -105,6 +105,9 @@ export function createCombatAvatar({ skin = 'cyan', team = 'alpha' } = {}) {
     b(leg, 'plates', [0, -.845, -.09], [.20, .13, .30]);
   }
   let hitTime = 0;
+  let shotTime = 0;
+  let deathProgress = 0;
+  let aliveState = true;
   let walking = 0;
   let lastHealth = 100;
 
@@ -124,12 +127,25 @@ export function createCombatAvatar({ skin = 'cyan', team = 'alpha' } = {}) {
   function setHealth(health, alive = true, shield = false) {
     if (health < lastHealth && alive) hitTime = .25;
     lastHealth = health;
-    root.visible = alive;
+    if (!alive && aliveState) deathProgress = .001;
+    if (alive && !aliveState) deathProgress = 0;
+    aliveState = alive;
+    root.visible = alive || deathProgress > 0;
     mats.team.emissiveIntensity = shield ? 1.8 : .8;
   }
+  function fire() { shotTime = .16; }
   function animate(dt, yaw, pitch, speed = 0) {
     dt = Math.max(0, Math.min(.06, dt));
     root.rotation.y = yaw;
+    if (deathProgress > 0) {
+      deathProgress += dt;
+      root.visible = deathProgress < .42;
+      torso.rotation.z = Math.min(.85, deathProgress * 2);
+      torso.position.y = -Math.min(.65, deathProgress * 1.65);
+    } else {
+      torso.rotation.z += (0 - torso.rotation.z) * Math.min(1, dt * 14);
+      torso.position.y += (0 - torso.position.y) * Math.min(1, dt * 14);
+    }
     helmet.rotation.x += (THREE.MathUtils.clamp(pitch, -.9, .8) - helmet.rotation.x) * Math.min(1, dt * 12);
     // Grounded body, slight controlled stride rather than full-body head rotation.
     const stride = Math.min(1, speed / 3.2);
@@ -138,6 +154,12 @@ export function createCombatAvatar({ skin = 'cyan', team = 'alpha' } = {}) {
     rightLeg.rotation.x = -leftLeg.rotation.x;
     leftArm.rotation.x = -leftLeg.rotation.x * .6;
     rightArm.rotation.x = -rightLeg.rotation.x * .6;
+    if (shotTime > 0) {
+      shotTime = Math.max(0, shotTime - dt);
+      const kick = Math.sin((shotTime / .16) * Math.PI) * .36;
+      rightArm.rotation.x -= kick;
+      leftArm.rotation.x -= kick * .45;
+    }
     if (hitTime > 0) hitTime = Math.max(0, hitTime - dt);
     mats.accent.emissiveIntensity = .9 + hitTime * 4;
   }
@@ -146,5 +168,5 @@ export function createCombatAvatar({ skin = 'cyan', team = 'alpha' } = {}) {
     // CUBE, SPHERE, CYLINDER, PANEL and insignia textures are shared and retained.
   }
   setStyle(skin, team);
-  return { group: root, setStyle, setHealth, animate, dispose, materials: ownedMaterials };
+  return { group: root, setStyle, setHealth, fire, animate, dispose, materials: ownedMaterials };
 }
