@@ -302,7 +302,7 @@
 
       <section id="mp-section" aria-label="Мультиплеер, экспериментальная версия">
         <h2>МУЛЬТИПЛЕЕР · BETA</h2>
-        <p style="font-size:13px;color:#a9b6e6">Пока доступны комнаты, совместное присутствие и отображение игроков. Общие мишени и очки ещё разрабатываются. Нужен отдельный WebSocket-сервер.</p>
+        <p style="font-size:13px;color:#a9b6e6">Экспериментальный мультиплеер: общие мишени, сетевые очки и присутствие игроков. Для игры нужен отдельный сервер. Нужен отдельный WebSocket-сервер.</p>
         <div id="mp-panel">
           <input id="mp-server" type="url" placeholder="wss://адрес-вашего-сервера" aria-label="Адрес сервера" autocomplete="off">
           <input id="mp-name" maxlength="20" placeholder="Имя игрока" aria-label="Имя игрока">
@@ -312,6 +312,7 @@
         </div>
         <div>Код: <strong id="mp-code">—</strong></div>
         <div id="mp-players" aria-live="polite"></div>
+        <div id="mp-ranking" aria-live="polite"></div>
         <button type="button" id="mp-start" hidden>Запустить сетевой таймер</button>
         <button type="button" id="mp-leave">Покинуть комнату</button>
         <p id="mp-status" role="status">Для мультиплеера требуется запущенный сервер.</p>
