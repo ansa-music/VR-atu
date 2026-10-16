@@ -103,3 +103,43 @@ test('two browsers join room 123 and receive server match start and targets', { 
     server.kill('SIGTERM');
   }
 });
+
+test('PvP room sends team spawns and authoritative AK shot result to two connected players', { timeout: 25_000 }, async () => {
+  const { server, ready } = spawnServer();
+  let host, guest;
+  try {
+    const port = await ready;
+    host = await connect(port);
+    guest = await connect(port);
+    host.send('room:create', {
+      name: 'Хозяин',
+      options: { code: '798', mode: 'pvp', maxPlayers: 2, durationSec: 30 },
+    });
+    const created = await host.waitFor('room:joined');
+    assert.equal(created.room.mode, 'pvp');
+    guest.send('room:join', { code: '798', name: 'Друг' });
+    const joined = await guest.waitFor('room:joined');
+    assert.equal(joined.room.players.length, 2);
+    host.send('round:start');
+    const started = await host.waitFor('room:update', m => m.room.phase === 'playing');
+    const guestStarted = await guest.waitFor('room:update', m => m.room.phase === 'playing');
+    assert.equal(guestStarted.room.phase, 'playing');
+    const alpha = started.room.players.find(p => p.id === created.playerId);
+    const bravo = started.room.players.find(p => p.id === joined.playerId);
+    assert.equal(alpha.team, 'alpha');
+    assert.equal(bravo.team, 'bravo');
+    assert.ok(alpha.spawn[2] > 0 && bravo.spawn[2] < 0);
+    host.send('player:shot', {
+      weapon: 'ak', origin: alpha.spawn, direction: [0, 0, -1],
+    });
+    const feedback = await host.waitFor('shot:result', x => x.weapon === 'ak');
+    const mirror = await guest.waitFor('shot:result', x => x.weapon === 'ak');
+    assert.equal(feedback.playerId, alpha.id);
+    assert.equal(mirror.playerId, alpha.id);
+    assert.equal(feedback.mode, 'pvp');
+  } finally {
+    host?.ws.close();
+    guest?.ws.close();
+    server.kill('SIGTERM');
+  }
+});

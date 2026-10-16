@@ -69,13 +69,15 @@ export function createSharedArena(scene) {
   });
   window.addEventListener('mp:transport', e => { clientSend = e.detail.send; });
 
-  function fire(origin, direction) {
+  function fire(origin, direction, weapon = 'ak') {
     if (!active || phase !== 'playing' || !clientSend || (mode === 'pvp' && !me?.alive)) return false;
     const now = performance.now();
-    if (now - lastShot < 115) return true;
+    // No artificial 115 ms cap on the AK-74M. Server applies the real profile.
+    if (now - lastShot < (mode === 'pvp' ? 65 : 115)) return false;
     lastShot = now;
-    clientSend('player:shot', { origin: origin.toArray(), direction: direction.toArray() });
-    return true;
+    return !!clientSend('player:shot', {
+      origin: origin.toArray(), direction: direction.toArray(), weapon,
+    });
   }
 
   return {
@@ -84,6 +86,14 @@ export function createSharedArena(scene) {
     get isPvp() { return active && mode === 'pvp'; },
     get health() { return me?.health ?? 100; },
     get kills() { return me?.kills || 0; },
+    get respawnSeconds() {
+      return active && mode === 'pvp' && me?.alive === false && me?.respawnAt
+        ? Math.max(0, (me.respawnAt - Date.now() - serverOffset) / 1000) : 0;
+    },
+    get shieldSeconds() {
+      return active && mode === 'pvp' && me?.alive === true && me?.invulnerableUntil
+        ? Math.max(0, (me.invulnerableUntil - Date.now() - serverOffset) / 1000) : 0;
+    },
     get alive() { return !active || mode !== 'pvp' || !!me?.alive; },
     get team() { return me?.team || 'alpha'; },
     get playing() { return active && phase === 'playing'; },
