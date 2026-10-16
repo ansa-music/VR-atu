@@ -114,6 +114,7 @@ function setState(s) {
 
 // старт: сначала отсчёт 3-2-1, потом раунд
 function startGame() {
+  combat.reset();
   setState('countdown');
   countdown = 3;
   lastCount = -1;
