@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomStore, newPlayer } from './rooms.js';
+import { clearArena, tickArena, targetsSnapshot, shoot } from './arena.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
@@ -47,6 +48,7 @@ function handle(player, msg) {
       if (room) return send(player.socket, 'error', { code: 'ALREADY_IN_ROOM' });
       const joined = rooms.join(msg.code, player, msg.name);
       send(player.socket, 'room:joined', { playerId: player.id, room: rooms.snapshot(joined) });
+      send(player.socket, 'targets:update', { targets: targetsSnapshot(joined) });
       broadcast(joined, 'room:update', { room: rooms.snapshot(joined) });
       break;
     }
@@ -57,8 +59,25 @@ function handle(player, msg) {
     case 'round:start':
       if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
       rooms.start(room, player.id);
+      clearArena(room);
+      tickArena(room, Date.now());
+      broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
       broadcast(room, 'room:update', { room: rooms.snapshot(room) });
       break;
+    case 'player:shot': {
+      if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
+      const now = Date.now();
+      if (now - player.lastShotAt < 110) return;
+      player.lastShotAt = now;
+      const result = shoot(room, player.id, msg, now);
+      if (result.error) return send(player.socket, 'error', { code: result.error });
+      broadcast(room, 'shot:result', result);
+      if (result.hit) {
+        broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+        broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+      }
+      break;
+    }
     case 'player:pose': {
       if (!room) return;
       const now = Date.now();
@@ -110,13 +129,21 @@ const timer = setInterval(() => {
   for (const room of rooms.rooms.values()) {
     const previous = room.phase;
     rooms.tick(room);
+    if (tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
     if (previous !== room.phase) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
   }
 }, HEARTBEAT_MS);
 
+const arenaTimer = setInterval(() => {
+  for (const room of rooms.rooms.values()) {
+    if (tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
+  }
+}, 100);
+
 server.listen(PORT, () => console.log('VR-ATU multiplayer server listening on', PORT));
 function shutdown() {
   clearInterval(timer);
+  clearInterval(arenaTimer);
   wss.close();
   server.close();
 }
