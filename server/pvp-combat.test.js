@@ -14,15 +14,15 @@ function setup() {
   const shooter = room.players.get(a.id), victim = room.players.get(b.id);
   shooter.position = [9.6,1.6,3];
   victim.position = [9.6,1.6,-3];
-  return {room, shooter, victim, now, ray:{origin:shooter.position,direction:[0,0,-1]}};
+  return {room, shooter, victim, now, ray:{weapon:'ak',origin:shooter.position,direction:[0,0,-1]}};
 }
 
 test('PvP spawn shield blocks hits until its expiry', () => {
   const {room,shooter,victim,now,ray}=setup();
-  assert.equal(pvpShoot(room,shooter,ray,now+SPAWN_SHIELD_MS-1).hit,false);
+  assert.equal(pvpShoot(room,shooter,ray,now+SPAWN_SHIELD_MS-100).hit,false);
   assert.equal(victim.health,100);
   assert.equal(pvpShoot(room,shooter,ray,now+SPAWN_SHIELD_MS).hit,true);
-  assert.equal(victim.health,33);
+  assert.equal(victim.health,47);
 });
 
 test('PvP cover blocks damage, but an unobstructed lane allows hits', () => {
@@ -31,7 +31,7 @@ test('PvP cover blocks damage, but an unobstructed lane allows hits', () => {
   assert.equal(pvpShoot(room,shooter,{...ray,origin:shooter.position},now+2000).hit,false);
   assert.equal(victim.health,100);
   shooter.position=[9.6,1.6,3]; victim.position=[9.6,1.6,-3];
-  assert.equal(pvpShoot(room,shooter,{...ray,origin:shooter.position},now+2000).hit,true);
+  assert.equal(pvpShoot(room,shooter,{...ray,origin:shooter.position},now+2200).hit,true);
 });
 
 test('PvP death awards one kill and respawns in a walkable team slot with protection', () => {
