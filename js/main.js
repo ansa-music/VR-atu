@@ -11,6 +11,7 @@ import { createPvpMap } from './pvp-map.js';
 import { slideMovement } from './pvp-layout.js?v=atu-bastion-v2';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
+import { QUALITY, detectQuality } from './quality.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -19,9 +20,9 @@ const sound = (name, ...args) => { try { sfx[name]?.(...args); } catch {} };
 
 // модули оружия, персонажа, графики и интерфейса: если какой-то не загрузился, игра всё равно работает
 const load = (path) => import(path).catch((e) => { console.warn('Модуль не загружен:', path, e); return {}; });
-const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod] = await Promise.all([
+const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod, comfortMod] = await Promise.all([
   load('./guns.js'), load('./character.js'), load('./graphics.js'), load('./ballistics.js'),
-  load('./range.js'), load('./logo.js'), load('./hud.js'),
+  load('./range.js'), load('./logo.js'), load('./hud.js'), load('./vr-comfort.js'),
 ]);
 const safeCall = (fn, ...args) => { try { return fn ? fn(...args) : null; } catch (e) { console.warn(e); return null; } };
 
@@ -39,10 +40,13 @@ const MOVE = { walk: 3.2, sprint: 5.8, crouch: 1.5, ads: 0.6, accel: 12, airAcce
 const HINT = 'ЛКМ — огонь · ПКМ — прицел · R — перезарядка · 1–5 / колесо — оружие · B — режим огня · Shift — бег · C — присед · Пробел — прыжок · Tab / Esc — курсор и меню';
 
 // ---------- рендер и сцена ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const quality = detectQuality();
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+let pixelCap = Math.min(devicePixelRatio, quality.pixelRatio); // динамическое разрешение опускает его при просадках
+renderer.setPixelRatio(pixelCap);
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+renderer.xr.setFramebufferScaleFactor(quality.framebufferScale);
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
 
@@ -84,7 +88,7 @@ addEventListener('mp:shot-feedback', event => {
 });
 
 const envBefore = new Set(scene.children);
-const env = buildEnvironment(scene);
+const env = buildEnvironment(scene, { quality });
 const range = safeCall(rangeMod.createRange, scene);
 const logo = safeCall(logoMod.createAtuLogo, scene);
 // тир, рубеж и вывеска скрываются, когда идёт PvP на карте «Бастион»
@@ -129,13 +133,19 @@ addEventListener('mp:room:left', () => { multiplayerPlayerId = null; updatePvpWo
 addEventListener('mp:status', e => {
   if (e.detail?.state === 'disconnected') { multiplayerPlayerId = null; updatePvpWorld(null); }
 });
-const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
+const gfx = safeCall(gfxMod.setupGraphics, renderer, scene, { quality });
 const hud = safeCall(hudMod.createHud);
 
 // тень игрока на полу
 const shadowBlob = safeCall(charMod.createShadowBlob);
 if (shadowBlob) scene.add(shadowBlob);
-const fx = createFx(scene);
+const fx = createFx(scene, { maxParticles: quality.maxParticles });
+
+// всплывающее сообщение: на ПК — в HUD, в шлеме — перед глазами
+function notify(text, color) {
+  if (renderer.xr.isPresenting) comfort?.toast?.(text, color);
+  else hud?.toast(text, color);
+}
 
 const board = createScoreboard();
 board.mesh.position.set(0, 4.2, -7);
@@ -345,7 +355,7 @@ function spawnTarget() {
   const r = Math.random();
   const type = r < 0.12 ? 'gold' : r < 0.25 ? 'bomb' : 'normal';
   const color = type === 'gold' ? 0xffd23f : type === 'bomb' ? 0x330a0a : COLORS[(Math.random() * COLORS.length) | 0];
-  let t = safeCall(gfxMod.createTargetVisual, type, type === 'bomb' ? 0xff2244 : color);
+  let t = safeCall(gfxMod.createTargetVisual, type, type === 'bomb' ? 0xff2244 : color, { quality });
   if (!t?.isMesh || !t.material) {
     // запасной вид мишени
     const mat = new THREE.MeshStandardMaterial({
@@ -393,7 +403,8 @@ function clearTargets() {
 }
 
 function updateTargets(dt, time) {
-  for (const t of [...targets.children]) {
+  for (let i = targets.children.length - 1; i >= 0; i--) { // с конца: удаление не сбивает обход
+    const t = targets.children[i];
     const u = t.userData, p = t.position, v = u.vel;
     u.age += dt;
     p.addScaledVector(v, dt);
@@ -536,7 +547,7 @@ function onBulletHit(shot, hit) {
       hitTarget(t, point, shot.controller);
       if (!bomb && shot.kills === 2) {
         fx.banner?.(point.clone().add(BANNER_OFFSET), 'ПРОСТРЕЛ!', '#ff9a3c');
-        hud?.toast('ПРОСТРЕЛ!', '#ff9a3c');
+        notify('ПРОСТРЕЛ!', '#ff9a3c');
       }
       return !bomb;
     }
@@ -552,7 +563,7 @@ function onBulletHit(shot, hit) {
         const pts = res.points * m;
         score += pts;
         fx.popup(point.clone().add(tmpV.set(0, 0.8 + dist * 0.02, 0)), '+' + pts, '#ffd23f', Math.max(1, dist / 7));
-        hud?.toast(`+${pts} · ${res.label}`, '#ffd23f');
+        notify(`+${pts} · ${res.label}`, '#ffd23f');
         mk.send('G');
         vibrate(shot.controller, 0.5, 60);
       }
@@ -644,7 +655,7 @@ function tryShoot(first, source) {
   const r = w.pull(first);
   if (!r) return;
   if (r.dry) {
-    if (!w.startReload() && w.reserve <= 0) hud?.toast('НЕТ ПАТРОНОВ', '#ff5a6e');
+    if (!w.startReload() && w.reserve <= 0) notify('НЕТ ПАТРОНОВ', '#ff5a6e');
     return;
   }
 
@@ -707,9 +718,9 @@ function handleWeaponEvent(w, e) {
       else sound('slideRack');
       break;
     case 'shell-in': sound('shellIn'); break;
-    case 'overheat': sound('overheat'); hud?.toast('ПЕРЕГРЕВ!', '#ff5a6e'); break;
+    case 'overheat': sound('overheat'); notify('ПЕРЕГРЕВ!', '#ff5a6e'); break;
     case 'vent-start': case 'vented': sound('vent'); break;
-    case 'mode': sound('fireMode'); hud?.toast('Режим огня: ' + (e.mode === 'auto' ? 'автоматический' : 'одиночный'), '#9fe7ff'); break;
+    case 'mode': sound('fireMode'); notify('Режим огня: ' + (e.mode === 'auto' ? 'автоматический' : 'одиночный'), '#9fe7ff'); break;
   }
 }
 
@@ -902,6 +913,63 @@ const controllers = [0, 1].map((i) => {
   return c;
 });
 let vrAim = false, vrCrouch = false, vrSprint = false;
+// комфорт в шлеме: виньетка при движении, моргание при повороте, подсказки по кнопкам
+const comfort = safeCall(comfortMod.createVrComfort, { renderer, camera, controllers });
+buildSettingsUi();
+
+// блок «Настройки» на стартовом экране: качество графики и комфорт в VR
+function buildSettingsUi() {
+  const host = document.querySelector('.ov-inner');
+  if (!host || document.getElementById('settings-section')) return;
+  const sec = document.createElement('section');
+  sec.id = 'settings-section';
+  sec.setAttribute('aria-label', 'Настройки графики и VR');
+  sec.style.cssText = 'max-width:680px;margin:18px auto 0;padding:16px 20px;border:1px solid rgba(62,197,255,.3);border-radius:18px;background:rgba(8,12,35,.78);text-align:left;display:grid;gap:10px';
+  const row = 'display:flex;justify-content:space-between;align-items:center;gap:12px;color:#e8edff;font-size:14px';
+  const sel = 'padding:8px 10px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit';
+  let saved = null;
+  try { saved = localStorage.getItem('vr-tir-quality'); } catch {}
+  sec.innerHTML = `
+    <b style="color:#9fe7ff;letter-spacing:.08em">НАСТРОЙКИ</b>
+    <label style="${row}">Качество графики
+      <select id="set-quality" style="${sel}">
+        <option value="auto">Авто (сейчас: ${quality.label.toLowerCase()})</option>
+        ${Object.values(QUALITY).map((q) => `<option value="${q.id}">${q.label}</option>`).join('')}
+      </select></label>
+    <label style="${row}">Поворот в VR
+      <select id="set-turn" style="${sel}"><option value="snap">Рывком на 45°</option><option value="smooth">Плавно</option></select></label>
+    <label style="${row}">Затемнение краёв при движении в VR
+      <select id="set-vignette" style="${sel}"><option value="on">Включено</option><option value="off">Выключено</option></select></label>
+    <small id="set-note" style="color:#a9b6e6">Качество «Низкое» включается само в автономных шлемах (Quest, Pico).</small>`;
+  const anchor = document.getElementById('mp-section') || host.querySelector('.ov-foot');
+  host.insertBefore(sec, anchor || null);
+
+  const q = sec.querySelector('#set-quality');
+  const turn = sec.querySelector('#set-turn');
+  const vig = sec.querySelector('#set-vignette');
+  q.value = QUALITY[saved] ? saved : 'auto';
+  turn.value = comfort?.settings?.turn === 'smooth' ? 'smooth' : 'snap';
+  vig.value = comfort?.settings?.vignette === false ? 'off' : 'on';
+  const saveComfort = () => {
+    if (comfort?.settings) {
+      comfort.settings.turn = turn.value;
+      comfort.settings.vignette = vig.value === 'on';
+    }
+    try {
+      const prev = JSON.parse(localStorage.getItem('vr-tir-comfort') || '{}');
+      localStorage.setItem('vr-tir-comfort', JSON.stringify({ ...prev, turn: turn.value, vignette: vig.value === 'on' }));
+    } catch {}
+  };
+  turn.addEventListener('change', saveComfort);
+  vig.addEventListener('change', saveComfort);
+  q.addEventListener('change', () => {
+    try {
+      if (q.value === 'auto') localStorage.removeItem('vr-tir-quality');
+      else localStorage.setItem('vr-tir-quality', q.value);
+    } catch {}
+    sec.querySelector('#set-note').textContent = 'Новое качество применится после перезагрузки страницы.';
+  });
+}
 
 // ПК: оружие и рука от первого лица в правом нижнем углу
 const viewModel = new THREE.Group();
@@ -1036,9 +1104,11 @@ function isCrouched() {
   return crouchAmt > 0.5;
 }
 
+let turnRate = 0; // скорость искусственного поворота, рад/с (для виньетки)
 function updateMovement(dt) {
   const xr = renderer.xr.isPresenting;
   move.set(0, 0);
+  turnRate = 0;
 
   // клавиатура
   if (keys.has('KeyW') || keys.has('ArrowUp')) move.y += 1;
@@ -1065,7 +1135,15 @@ function updateMovement(dt) {
         if (Math.abs(sx) > 0.15) move.x += sx;
         if (Math.abs(sy) > 0.15) move.y -= sy;
       } else if (src.handedness === 'right') {
-        if (!c.userData.turned && Math.abs(sx) > 0.7) {
+        if (comfort?.settings?.turn === 'smooth') {
+          // плавный поворот: 120°/с, с мёртвой зоной
+          if (Math.abs(sx) > 0.2) {
+            const rate = -Math.sign(sx) * (Math.abs(sx) - 0.2) / 0.8 * 2.1;
+            snapTurn(rate * dt);
+            turnRate = Math.abs(rate);
+          }
+        } else if (!c.userData.turned && Math.abs(sx) > 0.7) {
+          comfort?.onSnapTurn?.();
           snapTurn(-Math.sign(sx) * Math.PI / 4);
           c.userData.turned = true;
         } else if (Math.abs(sx) < 0.3) {
@@ -1219,17 +1297,65 @@ function updateViewModel(dt) {
 }
 
 // ---------- VR: оптика СВ-98 рисуется в текстуру на линзе ----------
-let scopeRT = null, scopeCam = null;
+let scopeRT = null, scopeCam = null, scopeFrame = 0, reticleTex = null;
+
+// сетка ПСО поверх линзы: красный угольник, шкала поправок, тёмное кольцо по краю
+function addLensReticle(lens) {
+  if (!reticleTex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    const k = 128, mil = 256 / 105; // поле зрения ~6° ≈ 105 тысячных
+    g.strokeStyle = 'rgba(10,10,14,0.95)';
+    g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(k - 10 * mil, k); g.lineTo(k - 1.2 * mil, k); g.moveTo(k + 1.2 * mil, k); g.lineTo(k + 10 * mil, k); g.stroke();
+    for (let i = -10; i <= 10; i++) {
+      if (!i) continue;
+      const h = i % 5 ? 2.5 : 5;
+      g.beginPath(); g.moveTo(k + i * mil, k); g.lineTo(k + i * mil, k + h); g.stroke();
+    }
+    g.beginPath(); g.moveTo(k, k + 4 * mil); g.lineTo(k, k + 24 * mil); g.stroke();
+    const chevron = (y, s, color) => {
+      g.strokeStyle = color;
+      g.beginPath(); g.moveTo(k - s, y + s * 1.4); g.lineTo(k, y); g.lineTo(k + s, y + s * 1.4); g.stroke();
+    };
+    g.lineWidth = 2.2;
+    chevron(k, 3 * mil, '#ff3b30');
+    g.lineWidth = 1.4;
+    for (let i = 1; i <= 3; i++) chevron(k + i * mil * 1.6, 1.4 * mil, 'rgba(10,10,14,0.95)');
+    const ring = g.createRadialGradient(k, k, k * 0.82, k, k, k);
+    ring.addColorStop(0, 'rgba(0,0,0,0)');
+    ring.addColorStop(1, 'rgba(0,0,0,0.85)');
+    g.fillStyle = ring;
+    g.fillRect(0, 0, 256, 256);
+    reticleTex = new THREE.CanvasTexture(c);
+    reticleTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  lens.geometry.computeBoundingSphere();
+  const r = lens.geometry.boundingSphere.radius;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(r * 2, r * 2),
+    new THREE.MeshBasicMaterial({ map: reticleTex, transparent: true, depthWrite: false, toneMapped: false }));
+  m.position.z = 0.0004; // чуть ближе к глазу, чем изображение
+  m.renderOrder = 5;
+  lens.add(m);
+  return m;
+}
+const lensPos = new THREE.Vector3();
 function renderScopeLens() {
   const g = handGun(weaponHand);
   if (!g?.lens || !g.group.visible) return;
+  // вторая отрисовка сцены дорогая: каждый кадр — только когда прицел у глаза, иначе изредка
+  g.lens.getWorldPosition(lensPos);
+  const nearEye = lensPos.distanceToSquared(headPos) < 0.3 * 0.3;
+  if (!nearEye && scopeFrame++ % 8 !== 0) return;
   if (!scopeRT) {
-    scopeRT = new THREE.WebGLRenderTarget(512, 512);
+    scopeRT = new THREE.WebGLRenderTarget(quality.scopeRes, quality.scopeRes);
     scopeCam = new THREE.PerspectiveCamera(scopeFov(arsenal.current.def), 1, 1.2, 300); // поле зрения прицела 7×
   }
-  g.lens.getWorldPosition(scopeCam.position);
+  scopeCam.position.copy(lensPos);
   weaponHand.getWorldQuaternion(scopeCam.quaternion);
   if (g.lens.material.map !== scopeRT.texture) { g.lens.material.map = scopeRT.texture; g.lens.material.color?.set(0xffffff); g.lens.material.needsUpdate = true; }
+  if (!g.lens.userData.reticle) g.lens.userData.reticle = addLensReticle(g.lens);
   const xrOn = renderer.xr.enabled;
   const prev = renderer.getRenderTarget();
   renderer.xr.enabled = false;
@@ -1251,6 +1377,9 @@ function follow(obj, dist, height, speed, dt) {
 
 // после выхода из VR возвращаем камеру в «рост»
 renderer.xr.addEventListener('sessionstart', () => {
+  // фиксированный фовеальный рендер: края кадра в шлеме рисуются в меньшем разрешении
+  try { renderer.xr.setFoveation(quality.foveation); } catch {}
+  frameStats.reset();
   viewModel.visible = false; // в шлеме оружие в руках, а не у камеры
   camera.position.set(0, 0, 0);
   camera.rotation.set(0, 0, 0);
@@ -1328,12 +1457,56 @@ function updateHud() {
   hud.update(hudInfo);
 }
 
+// ---------- динамическое качество ----------
+// долгие просадки: на ПК снижаем разрешение, в шлеме усиливаем фовеальный рендер; запас — возвращаем
+const frameStats = {
+  ema: 1 / 60, slow: 0, fast: 0, foveation: quality.foveation,
+  reset() { this.ema = 1 / 60; this.slow = this.fast = 0; },
+  update(raw) {
+    if (raw <= 0 || raw > 0.25) return; // вкладка спала или первый кадр
+    this.ema += (raw - this.ema) * 0.05;
+    if (renderer.xr.isPresenting) {
+      // кадры в шлеме идут с частотой дисплея (72–120 Гц): дольше ~17 мс — уже пропуски
+      this.slow = this.ema > 1 / 58 ? this.slow + raw : 0;
+      if (this.slow > 1.5 && this.foveation < 1) {
+        this.foveation = 1;
+        try { renderer.xr.setFoveation(1); } catch {}
+        this.slow = 0;
+      }
+      return;
+    }
+    const cap = Math.min(devicePixelRatio, quality.pixelRatio);
+    this.slow = this.ema > 1 / 45 ? this.slow + raw : 0;
+    this.fast = this.ema < 1 / 80 ? this.fast + raw : 0;
+    if (this.slow > 2 && pixelCap > 0.75) {
+      pixelCap = Math.max(0.75, pixelCap - 0.25);
+      renderer.setPixelRatio(pixelCap);
+      this.slow = 0;
+    } else if (this.fast > 6 && pixelCap < cap) {
+      pixelCap = Math.min(cap, pixelCap + 0.25);
+      renderer.setPixelRatio(pixelCap);
+      this.fast = 0;
+    }
+  },
+};
+
+// шейдеры всех видов мишеней и оружия компилируем заранее, чтобы первая мишень не дёргала кадр
+function warmup() {
+  safeCall(gfxMod.warmupTargets, renderer, scene, camera, { quality });
+  for (const g of Object.values(pcGuns)) g.group.visible = true;
+  try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
+  syncGunVisibility();
+}
+warmup();
+
 // ---------- игровой цикл ----------
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const raw = clock.getDelta();
+  const dt = Math.min(raw, 0.05);
   const time = clock.elapsedTime;
   const xr = renderer.xr.isPresenting;
+  frameStats.update(raw);
 
   updateHead();
   if (xr) pollVrButtons();
@@ -1345,7 +1518,11 @@ renderer.setAnimationLoop(() => {
 
   // оружие: смена, перезарядка, события
   arsenal.update(dt);
-  for (const e of arsenal.drain()) if (e.type === 'draw') sound('draw');
+  for (const e of arsenal.drain()) {
+    if (e.type !== 'draw') continue;
+    sound('draw');
+    if (xr) comfort?.showWeapon?.(arsenal.current.def.short || arsenal.current.def.name, weaponHand);
+  }
   if (arsenal.current.def.id !== lastWeaponId) { lastWeaponId = arsenal.current.def.id; syncGunVisibility(); aimAmt = 0; }
   if (xr) syncGunVisibility();
   handleTriggers();
@@ -1386,6 +1563,7 @@ renderer.setAnimationLoop(() => {
   updateCharacter(dt);
   updateHud();
   pvpFeed.style.opacity = pvpEnabled && performance.now() < pvpFeedbackTime ? '1' : '0';
+  if (xr) comfort?.update?.(dt, { speed: Math.hypot(vel.x, vel.z), angularSpeed: turnRate, airborne: !onGround, sprinting });
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
@@ -1440,6 +1618,10 @@ if (/[?&]debug\b/.test(location.search)) {
     fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
     select(i) { arsenal.select(i); },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
+    get info() {
+      const i = renderer.info;
+      return { calls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures, programs: i.programs?.length, sceneObjects: scene.children.length, quality: quality.id, pixelRatio: renderer.getPixelRatio(), frameMs: +(frameStats.ema * 1000).toFixed(1) };
+    },
   };
 }
 

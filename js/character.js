@@ -32,73 +32,136 @@ function box(x, y, z) {
   return g;
 }
 
+// ---------- слияние статичных деталей: одна геометрия на материал ----------
+// Детали копятся по «роли» материала ('armor' | 'graph' | 'palm' | 'glow'),
+// матрица детали запекается в вершины, потом всё сливается в один индексный буфер.
 const _up = new THREE.Vector3(0, 1, 0), _a = new THREE.Vector3(), _b = new THREE.Vector3();
+const _pos = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1), _sc = new THREE.Vector3();
+const _q = new THREE.Quaternion(), _e = new THREE.Euler();
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _mb = new THREE.Matrix4();
+
+function createBatch() {
+  const parts = new Map();            // роль -> [{ geo, flip }]
+  const base = new THREE.Matrix4();   // общее смещение текущей группы деталей
+  return {
+    base,
+    add(geo, role, matrix) {
+      _mb.multiplyMatrices(base, matrix);
+      const g = geo.clone().applyMatrix4(_mb);
+      let list = parts.get(role);
+      if (!list) { list = []; parts.set(role, list); }
+      list.push({ geo: g, flip: _mb.determinant() < 0 });   // зеркальная матрица — разворот граней
+    },
+    merge() {
+      const out = {};
+      for (const [role, list] of parts) {
+        out[role] = mergeGeometries(list);
+        for (const p of list) p.geo.dispose();
+      }
+      return out;
+    },
+  };
+}
+
+// position/normal/uv + индексы со смещением (неиндексные детали индексируются по порядку)
+function mergeGeometries(list) {
+  let nv = 0, ni = 0;
+  for (const { geo } of list) {
+    const n = geo.attributes.position.count;
+    nv += n;
+    ni += geo.index ? geo.index.count : n;
+  }
+  const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2);
+  const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vo = 0, io = 0;
+  for (const { geo, flip } of list) {
+    const P = geo.attributes.position, N = geo.attributes.normal, U = geo.attributes.uv;
+    const n = P.count;
+    for (let i = 0; i < n; i++) {
+      const v = vo + i;
+      pos[v * 3] = P.getX(i); pos[v * 3 + 1] = P.getY(i); pos[v * 3 + 2] = P.getZ(i);
+      if (N) { nor[v * 3] = N.getX(i); nor[v * 3 + 1] = N.getY(i); nor[v * 3 + 2] = N.getZ(i); }
+      if (U) { uv[v * 2] = U.getX(i); uv[v * 2 + 1] = U.getY(i); }
+    }
+    const I = geo.index;
+    const cnt = I ? I.count : n;
+    for (let i = 0; i + 2 < cnt; i += 3) {
+      const a = vo + (I ? I.getX(i) : i);
+      const b = vo + (I ? I.getX(i + 1) : i + 1);
+      const c = vo + (I ? I.getX(i + 2) : i + 2);
+      idx[io++] = a;
+      if (flip) { idx[io++] = c; idx[io++] = b; } else { idx[io++] = b; idx[io++] = c; }
+    }
+    vo += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(new THREE.BufferAttribute(io === ni ? idx : idx.slice(0, io), 1));
+  out.computeBoundingSphere();
+  return out;
+}
+
 // сегмент-капсула между точками a и b
-function seg(parent, a, b, r, mat) {
+function seg(batch, a, b, r, role) {
   _a.fromArray(a); _b.fromArray(b);
   const len = _a.distanceTo(_b);
-  const m = new THREE.Mesh(capsule(r, len), mat);
-  m.position.copy(_a).add(_b).multiplyScalar(0.5);
-  m.quaternion.setFromUnitVectors(_up, _b.sub(_a).normalize());
-  parent.add(m);
-  return m;
+  _pos.copy(_a).add(_b).multiplyScalar(0.5);
+  _q.setFromUnitVectors(_up, _b.sub(_a).normalize());
+  batch.add(capsule(r, len), role, _m.compose(_pos, _q, _one));
 }
-function addBox(parent, size, pos, mat, rot) {
-  const m = new THREE.Mesh(box(size[0], size[1], size[2]), mat);
-  m.position.fromArray(pos);
-  if (rot) m.rotation.set(rot[0], rot[1], rot[2]);
-  parent.add(m);
-  return m;
+function addBox(batch, size, pos, role, rot) {
+  _pos.fromArray(pos);
+  if (rot) _q.setFromEuler(_e.set(rot[0], rot[1], rot[2])); else _q.identity();
+  batch.add(box(size[0], size[1], size[2]), role, _m.compose(_pos, _q, _one));
+}
+// кольцо: смещение по Z и равномерный масштаб внутри родительской матрицы
+function addRing(batch, parentM, z, s) {
+  _m2.compose(_pos.set(0, 0, z), _q.identity(), _sc.setScalar(s));
+  batch.add(ringGeo(), 'glow', _m.multiplyMatrices(parentM, _m2));
 }
 
 // ---------- перчатка (строится для правой руки, левая — зеркало) ----------
-function buildGlove(parent, glow) {
+function buildGlove(batch) {
   // пальцы: средний, безымянный, мизинец обхватывают рукоять
   const fingers = [[0.003, 0.0088], [-0.017, 0.0083], [-0.035, 0.0074]];
   for (const [y, r] of fingers) {
     const p0 = [0.031, y, -0.002], p1 = [0.023, y, -0.031];
     const p2 = [-0.004, y, -0.035], p3 = [-0.024, y, -0.017];
-    seg(parent, p0, p1, r, ARMOR);
-    seg(parent, p1, p2, r * 0.95, GRAPH);
-    seg(parent, p2, p3, r * 0.9, ARMOR);
+    seg(batch, p0, p1, r, 'armor');
+    seg(batch, p1, p2, r * 0.95, 'graph');
+    seg(batch, p2, p3, r * 0.9, 'armor');
     // накладка-костяшка
-    addBox(parent, [0.012, 0.015, 0.016], [0.038, y, -0.004], GRAPH);
+    addBox(batch, [0.012, 0.015, 0.016], [0.038, y, -0.004], 'graph');
     // пластина на первой фаланге
-    addBox(parent, [0.006, r * 1.6, 0.02], [0.033, y, -0.018], ARMOR, [0, -0.3, 0]);
+    addBox(batch, [0.006, r * 1.6, 0.02], [0.033, y, -0.018], 'armor', [0, -0.3, 0]);
   }
   // указательный — на спуске (0, -0.03, 0.035) в пространстве контроллера
   const iy = 0.024;
-  seg(parent, [0.031, iy, -0.003], [0.021, iy + 0.002, -0.031], 0.0085, ARMOR);
-  seg(parent, [0.021, iy + 0.002, -0.031], [0.006, iy, -0.041], 0.008, GRAPH);
-  seg(parent, [0.006, iy, -0.041], [0.0, iy - 0.004, -0.04], 0.0075, ARMOR);
-  addBox(parent, [0.012, 0.015, 0.016], [0.038, iy, -0.005], GRAPH);
+  seg(batch, [0.031, iy, -0.003], [0.021, iy + 0.002, -0.031], 0.0085, 'armor');
+  seg(batch, [0.021, iy + 0.002, -0.031], [0.006, iy, -0.041], 0.008, 'graph');
+  seg(batch, [0.006, iy, -0.041], [0.0, iy - 0.004, -0.04], 0.0075, 'armor');
+  addBox(batch, [0.012, 0.015, 0.016], [0.038, iy, -0.005], 'graph');
   // большой палец — с другой стороны рукояти
-  seg(parent, [0.022, 0.028, 0.036], [0.0, 0.036, 0.022], 0.0105, ARMOR);
-  seg(parent, [0.0, 0.036, 0.022], [-0.021, 0.033, 0.003], 0.0095, GRAPH);
-  seg(parent, [-0.021, 0.033, 0.003], [-0.026, 0.029, -0.014], 0.0085, ARMOR);
-  addBox(parent, [0.014, 0.01, 0.018], [0.004, 0.044, 0.024], GRAPH, [0, 0.6, 0]);
+  seg(batch, [0.022, 0.028, 0.036], [0.0, 0.036, 0.022], 0.0105, 'armor');
+  seg(batch, [0.0, 0.036, 0.022], [-0.021, 0.033, 0.003], 0.0095, 'graph');
+  seg(batch, [-0.021, 0.033, 0.003], [-0.026, 0.029, -0.014], 0.0085, 'armor');
+  addBox(batch, [0.014, 0.01, 0.018], [0.004, 0.044, 0.024], 'graph', [0, 0.6, 0]);
 
   // ладонь и тыльная бронепластина (тыл смотрит наружу, +X)
-  addBox(parent, [0.02, 0.068, 0.058], [0.027, -0.004, 0.026], PALM);
-  addBox(parent, [0.011, 0.07, 0.062], [0.041, -0.003, 0.022], ARMOR, [0, 0, 0.06]);
-  addBox(parent, [0.006, 0.05, 0.04], [0.048, 0.0, 0.026], GRAPH, [0, 0, 0.06]);
+  addBox(batch, [0.02, 0.068, 0.058], [0.027, -0.004, 0.026], 'palm');
+  addBox(batch, [0.011, 0.07, 0.062], [0.041, -0.003, 0.022], 'armor', [0, 0, 0.06]);
+  addBox(batch, [0.006, 0.05, 0.04], [0.048, 0.0, 0.026], 'graph', [0, 0, 0.06]);
   // светящиеся полосы на тыле
-  addBox(parent, [0.003, 0.005, 0.05], [0.0515, 0.012, 0.024], glow);
-  addBox(parent, [0.003, 0.005, 0.034], [0.0515, -0.006, 0.03], glow);
-  // запястье-манжета с кольцом
-  const cuff = new THREE.Group();
-  cuff.position.set(0.02, 0.006, 0.072);
-  cuff.rotation.x = 0.35;   // предплечье уходит назад и вниз
-  parent.add(cuff);
-  const cyl = new THREE.Mesh(cuffGeo(), ARMOR);
-  cuff.add(cyl);
-  const ring = new THREE.Mesh(ringGeo(), glow);
-  ring.position.z = -0.012;
-  cuff.add(ring);
-  const ring2 = new THREE.Mesh(ringGeo(), glow);
-  ring2.position.z = 0.014;
-  ring2.scale.setScalar(1.06);
-  cuff.add(ring2);
+  addBox(batch, [0.003, 0.005, 0.05], [0.0515, 0.012, 0.024], 'glow');
+  addBox(batch, [0.003, 0.005, 0.034], [0.0515, -0.006, 0.03], 'glow');
+  // запястье-манжета с кольцом; предплечье уходит назад и вниз (поворот X 0.35)
+  const cuffM = new THREE.Matrix4().compose(
+    _pos.set(0.02, 0.006, 0.072), _q.setFromEuler(_e.set(0.35, 0, 0)), _one);
+  batch.add(cuffGeo(), 'armor', cuffM);
+  addRing(batch, cuffM, -0.012, 1);
+  addRing(batch, cuffM, 0.014, 1.06);
 }
 function cuffGeo() {
   let g = geoCache.get('cuff');
@@ -115,60 +178,96 @@ function ringGeo() {
   return g;
 }
 
-export function createHand({ side = 'right', color = 0x3ec5ff } = {}) {
+// ---------- предплечье для десктопного вида (детали в пространстве pivot правой руки) ----------
+function buildForearm(batch) {
+  const L = 0.36;
+  // в группе руки предплечье стоит в GRIP + (0.02, 0.006, 0.085); pivot сдвинут на GRIP
+  batch.base.compose(
+    _pos.set(0.02, 0.006, 0.085),
+    _q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.18, -0.42, 1).normalize()),
+    _one);
+  const faM = batch.base.clone();
+
+  // рукав: сужающийся цилиндр от запястья к локтю
+  const sleeveGeo = new THREE.CylinderGeometry(0.046, 0.03, L, 12, 1, false);
+  sleeveGeo.rotateX(Math.PI / 2);
+  batch.add(sleeveGeo, 'graph', _m.makeTranslation(0, 0, L / 2));
+  sleeveGeo.dispose();
+  // бронепластины сверху и снаружи
+  for (let i = 0; i < 3; i++) {
+    const z = 0.06 + i * 0.105;
+    const r = 0.03 + (0.016 * z) / L;
+    addBox(batch, [0.042, 0.009, 0.085], [0, r + 0.002, z], 'armor', [0.04, 0, 0]);
+    addBox(batch, [0.009, 0.034, 0.085], [r + 0.002, 0, z], 'armor', [0, -0.04, 0]);
+  }
+  // светящиеся полосы вдоль рукава
+  addBox(batch, [0.004, 0.004, L * 0.9], [0.022, 0.035, L / 2], 'glow', [0.045, 0, 0]);
+  addBox(batch, [0.004, 0.004, L * 0.9], [0.035, -0.02, L / 2], 'glow', [0, -0.045, 0]);
+  // кольца: матрица предплечья уже в faM — база не нужна
+  batch.base.identity();
+  for (let i = 0; i < 3; i++) {
+    const z = 0.06 + i * 0.105;
+    const r = 0.03 + (0.016 * z) / L;
+    addRing(batch, faM, z + 0.05, (r + 0.003) / 0.031);
+  }
+}
+
+// Слитые геометрии общие для всех перчаток (цвет — только в материале): 'hand' | 'arm'
+const mergedGeos = {};
+function gloveGeos(withArm) {
+  const key = withArm ? 'arm' : 'hand';
+  if (!mergedGeos[key]) {
+    const batch = createBatch();
+    buildGlove(batch);
+    if (withArm) buildForearm(batch);
+    mergedGeos[key] = batch.merge();
+  }
+  return mergedGeos[key];
+}
+
+// Перчатка: по одному мешу на материал (броня, графит, ладонь, свечение)
+function buildHand(side, color, withArm) {
   baseMats();
   const group = new THREE.Group();
   group.name = 'hand-' + side;
-  const glow = glowMat(color);
   const pivot = new THREE.Group();     // точка — центр рукояти
   pivot.position.copy(GRIP);
   if (side === 'left') pivot.scale.x = -1;   // рендерер сам разворачивает грани
   group.add(pivot);
-  buildGlove(pivot, glow);
+  const mats = { armor: ARMOR, graph: GRAPH, palm: PALM, glow: glowMat(color) };
+  const geos = gloveGeos(withArm);
+  const glowMeshes = [];
+  for (const role in geos) {
+    const mesh = new THREE.Mesh(geos[role], mats[role]);
+    mesh.name = 'glove-' + role;
+    pivot.add(mesh);
+    if (role === 'glow') glowMeshes.push(mesh);
+  }
+  return { group, glowMeshes };
+}
+
+export function createHand({ side = 'right', color = 0x3ec5ff } = {}) {
+  const { group, glowMeshes } = buildHand(side, color, false);
   let t = Math.random() * 6;
   return {
     group,
     update(dt) {
       t += dt;
-      glow.emissiveIntensity = 1.4 + 0.5 * Math.sin(t * 3.2);
+      const k = 1.4 + 0.5 * Math.sin(t * 3.2);
+      // материал берём с меша: tintCharacter() подменяет его клоном
+      for (let i = 0; i < glowMeshes.length; i++) {
+        const mat = glowMeshes[i].material;
+        if (mat && mat.emissiveIntensity !== undefined) mat.emissiveIntensity = k;
+      }
     },
   };
 }
 
 // ---------- предплечье для десктопного вида ----------
 export function createArm({ color = 0xff7ad9 } = {}) {
-  baseMats();
-  const hand = createHand({ side: 'right', color });
-  const group = hand.group;
+  // кисть и рукав слиты в общие меши (свечение статичное, как и раньше — update нет)
+  const { group } = buildHand('right', color, true);
   group.name = 'arm';
-  const glow = hand.group.children[0].children.find((m) => m.material && m.material.emissive && m.material.emissiveIntensity > 1).material;
-
-  const L = 0.36;
-  const fa = new THREE.Group();
-  fa.position.set(GRIP.x + 0.02, GRIP.y + 0.006, GRIP.z + 0.085);
-  fa.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.18, -0.42, 1).normalize());
-  group.add(fa);
-
-  // рукав: сужающийся цилиндр от запястья к локтю
-  const sleeveGeo = new THREE.CylinderGeometry(0.046, 0.03, L, 12, 1, false);
-  sleeveGeo.rotateX(Math.PI / 2);
-  const sleeve = new THREE.Mesh(sleeveGeo, GRAPH);
-  sleeve.position.z = L / 2;
-  fa.add(sleeve);
-  // бронепластины сверху и снаружи
-  for (let i = 0; i < 3; i++) {
-    const z = 0.06 + i * 0.105;
-    const r = 0.03 + (0.016 * z) / L;
-    addBox(fa, [0.042, 0.009, 0.085], [0, r + 0.002, z], ARMOR, [0.04, 0, 0]);
-    addBox(fa, [0.009, 0.034, 0.085], [r + 0.002, 0, z], ARMOR, [0, -0.04, 0]);
-    const ring = new THREE.Mesh(ringGeo(), glow);
-    ring.position.z = z + 0.05;
-    ring.scale.setScalar((r + 0.003) / 0.031);
-    fa.add(ring);
-  }
-  // светящиеся полосы вдоль рукава
-  addBox(fa, [0.004, 0.004, L * 0.9], [0.022, 0.035, L / 2], glow, [0.045, 0, 0]);
-  addBox(fa, [0.004, 0.004, L * 0.9], [0.035, -0.02, L / 2], glow, [0, -0.045, 0]);
   return { group };
 }
 
