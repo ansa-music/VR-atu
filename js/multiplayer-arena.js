@@ -14,6 +14,7 @@ export function createSharedArena(scene) {
   const ray = new THREE.Raycaster();
   let active = false;
   let phase = 'lobby';
+  let mode = 'targets';
   let endsAt = null;
   let serverOffset = 0;
   let ownId = null;
@@ -29,12 +30,13 @@ export function createSharedArena(scene) {
   function setRoom(room) {
     active = !!room;
     phase = room?.phase || 'lobby';
-    if (!room) { clear(); players = []; ownId = null; return; }
+    mode = room?.mode || 'targets';
+    if (!room) { clear(); players = []; me = null; ownId = null; return; }
     players = room.players || [];
     me = players.find(p => p.id === ownId) || null;
     endsAt = room.endsAt;
     serverOffset = room.serverTime - Date.now();
-    if (phase !== 'playing') clear();
+    if (phase !== 'playing' || mode === 'pvp') clear();
     window.dispatchEvent(new CustomEvent('mp:scoreboard', { detail: {
       players: [...players].sort((a, b) => b.score - a.score), phase,
       remaining: Math.max(0, Math.ceil(((endsAt || 0) - Date.now() - serverOffset) / 1000)),
@@ -45,7 +47,7 @@ export function createSharedArena(scene) {
   window.addEventListener('mp:room:left', () => setRoom(null));
   window.addEventListener('mp:status', e => { if (e.detail.state === 'disconnected') setRoom(null); });
   window.addEventListener('mp:targets:update', e => {
-    if (!active || phase !== 'playing') return;
+    if (!active || phase !== 'playing' || mode === 'pvp') return;
     const targetList = Array.isArray(e.detail.targets) ? e.detail.targets : [];
     const ids = new Set(targetList.map(t => t.id));
     for (const [id, mesh] of meshes) if (!ids.has(id)) { group.remove(mesh); meshes.delete(id); }
@@ -68,7 +70,7 @@ export function createSharedArena(scene) {
   window.addEventListener('mp:transport', e => { clientSend = e.detail.send; });
 
   function fire(origin, direction) {
-    if (!active || phase !== 'playing' || !clientSend) return false;
+    if (!active || phase !== 'playing' || !clientSend || (mode === 'pvp' && !me?.alive)) return false;
     const now = performance.now();
     if (now - lastShot < 115) return true;
     lastShot = now;
@@ -78,6 +80,12 @@ export function createSharedArena(scene) {
 
   return {
     get active() { return active; },
+    get mode() { return mode; },
+    get isPvp() { return active && mode === 'pvp'; },
+    get health() { return me?.health ?? 100; },
+    get kills() { return me?.kills || 0; },
+    get alive() { return !active || mode !== 'pvp' || !!me?.alive; },
+    get team() { return me?.team || 'alpha'; },
     get playing() { return active && phase === 'playing'; },
     get score() { return me?.score || 0; },
     get timeLeft() { return phase === 'playing' ? Math.max(0, ((endsAt || 0) - Date.now() - serverOffset) / 1000) : 0; },
