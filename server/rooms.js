@@ -11,9 +11,10 @@ export function safeName(value) {
 }
 
 export function makeCode(existing) {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  // Short numeric room code. 000–999 are valid; rooms are discoverable by guessing.
+  const alphabet = '0123456789';
   for (let attempt = 0; attempt < 50; attempt++) {
-    const code = Array.from(randomBytes(6), n => alphabet[n % alphabet.length]).join('');
+    const code = Array.from(randomBytes(3), n => alphabet[n % alphabet.length]).join('');
     if (!existing.has(code)) return code;
   }
   throw new Error('Cannot allocate room code');
@@ -25,9 +26,16 @@ export class RoomStore {
     this.now = now;
   }
 
-  create(player, name) {
-    const code = makeCode(this.rooms);
-    const room = { code, hostId: player.id, phase: 'lobby', players: new Map(), startedAt: null, endsAt: null };
+  create(player, name, options = {}) {
+    const requested = String(options.code ?? '').trim();
+    if (requested && !/^\\d{3}$/.test(requested)) throw new Error('INVALID_CODE');
+    const code = requested || makeCode(this.rooms);
+    if (this.rooms.has(code)) throw new Error('CODE_TAKEN');
+    const limit = Number(options.maxPlayers);
+    const duration = Number(options.durationSec);
+    const room = { code, hostId: player.id, phase: 'lobby', players: new Map(), startedAt: null, endsAt: null,
+      title: safeName(options.title || 'Комната ATU'), maxPlayers: Number.isInteger(limit) && limit >= 2 && limit <= 8 ? limit : 8,
+      durationSec: [30, 60, 90, 120].includes(duration) ? duration : 60 };
     this.rooms.set(code, room);
     this.addPlayer(room, player, name);
     return room;
@@ -35,8 +43,8 @@ export class RoomStore {
 
   addPlayer(room, player, name) {
     if (room.phase !== 'lobby') throw new Error('ROUND_IN_PROGRESS');
-    if (room.players.size >= MAX_PLAYERS) throw new Error('ROOM_FULL');
-    room.players.set(player.id, { id: player.id, name: safeName(name), score: 0, shots: 0, hits: 0, ready: false });
+    if (room.players.size >= room.maxPlayers) throw new Error('ROOM_FULL');
+    room.players.set(player.id, { id: player.id, name: safeName(name), score: 0, shots: 0, hits: 0, combo: 0, ready: false, skin: 'cyan' });
     player.roomCode = room.code;
     return room;
   }
@@ -65,7 +73,7 @@ export class RoomStore {
     if (room.phase !== 'lobby' && room.phase !== 'finished') throw new Error('ROUND_IN_PROGRESS');
     room.phase = 'playing';
     room.startedAt = this.now();
-    room.endsAt = room.startedAt + ROUND_MS;
+    room.endsAt = room.startedAt + room.durationSec * 1000;
     for (const p of room.players.values()) { p.score = 0; p.shots = 0; p.hits = 0; }
     return room;
   }
@@ -79,6 +87,7 @@ export class RoomStore {
     this.tick(room);
     return {
       code: room.code, hostId: room.hostId, phase: room.phase,
+      title: room.title, maxPlayers: room.maxPlayers, durationSec: room.durationSec,
       serverTime: this.now(), endsAt: room.endsAt,
       players: [...room.players.values()].map(p => ({ ...p })),
     };
