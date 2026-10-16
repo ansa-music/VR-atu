@@ -61,7 +61,7 @@ function submit(action) {
     showStatus('На HTTPS-сайте нужен защищённый сервер wss://');
     return;
   }
-  if (action === 'join' && !/^\\d{3}$/.test(inputCode.value.trim())) {
+  if (action === 'join' && !/^\d{3}$/.test(inputCode.value.trim())) {
     showStatus('Введите трёхзначный цифровой код');
     return;
   }
