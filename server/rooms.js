@@ -89,7 +89,7 @@ export class RoomStore {
     return {
       code: room.code, hostId: room.hostId, phase: room.phase,
       title: room.title, maxPlayers: room.maxPlayers, durationSec: room.durationSec,
-      serverTime: this.now(), endsAt: room.endsAt,
+      serverTime: this.now(), startedAt: room.startedAt, endsAt: room.endsAt,
       players: [...room.players.values()].map(p => ({ ...p })),
     };
   }

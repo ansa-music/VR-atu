@@ -39,12 +39,15 @@ function renderPlay() {
 
 function setOpen(open) {
   if (!overlay) return;
+  // Возвращаем курсор, когда открываем лобби после матча.
+  if (open && document.pointerLockElement && document.exitPointerLock) {
+    try { document.exitPointerLock(); } catch {}
+  }
   overlay.classList.toggle('is-hidden', !open);
   overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
   overlay.inert = !open;
   document.body.classList.toggle('ov-open', open);
   if (open) {
-    if (document.pointerLockElement) document.exitPointerLock?.();
     renderPlay();
     if (inMultiplayerRoom) {
       const target = canResume() ? resume : document.getElementById('mp-start');
