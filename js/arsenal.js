@@ -47,7 +47,7 @@ export const WEAPONS = [
     interval: 0.1, cycleTime: 1.05,
     velocity: 820, drag: 0.00085, gravity: G, pellets: 1, penetration: 2, zero: 100,
     reload: 3.0, reloadEmpty: 3.8,
-    adsTime: 0.4, adsFov: 30, zoom: 7, sway: 0.28, drawTime: 0.7, speedMul: 0.86,
+    adsTime: 0.4, adsFov: 30, zoom: 7, scopeFov: 6, sway: 0.28, drawTime: 0.7, speedMul: 0.86, // поле зрения прицела ~5,5°
     spread: { hip: 5, ads: 0.012, move: 3, air: 8, crouch: 0.8, bloom: 0, bloomMax: 0, bloomRecover: 1 },
     recoil: { pitch: 5.5, yaw: 1, recover: 6, delay: 0.2, punch: 2 },
     casing: 'sniper', tracerEvery: 1, color: 0xffd27a,

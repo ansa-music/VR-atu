@@ -13,7 +13,7 @@ const A12 = (12 / 16) * Math.PI * 2, A13 = (13 / 16) * Math.PI * 2;
 const P12 = new THREE.Vector3(Math.cos(A12) * 14, 0, Math.sin(A12) * 14); // (0, 0, -14)
 const P13 = new THREE.Vector3(Math.cos(A13) * 14, 0, Math.sin(A13) * 14); // (5.36, 0, -12.93)
 const BEAM_Y = 6.2;
-const BOARD_Y = 7.9;
+const BOARD_Y = 8.9; // выше табло, которое висит перед игроком
 const BOARD_W = 4.6, BOARD_H = 2.3;
 
 // холст табло 2048×1024 (2:1, как и само табло)
@@ -347,7 +347,7 @@ export function createAtuLogo(scene) {
   }
 
   // ---- Крепление табло: две стойки и нижняя планка ----
-  const boardBottom = BOARD_Y - BOARD_H / 2; // 6.75
+  const boardBottom = BOARD_Y - BOARD_H / 2;
   const beamTop = BEAM_Y + 0.18;
   const strutH = boardBottom + 0.08 - beamTop;
   const strutGeo = new THREE.BoxGeometry(0.08, strutH, 0.08);

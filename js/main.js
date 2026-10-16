@@ -713,7 +713,7 @@ addEventListener('mp:focus-controls', () => {
 
 let wheelAt = 0;
 addEventListener('wheel', (e) => {
-  if (renderer.xr.isPresenting || document.body.classList.contains('ov-open')) return;
+  if (renderer.xr.isPresenting || !locked()) return; // свободный курсор — колесо просто прокручивает
   const now = performance.now();
   if (now - wheelAt < 120 || Math.abs(e.deltaY) < 1) return;
   wheelAt = now;
@@ -1071,7 +1071,7 @@ function updateMovement(dt) {
 }
 
 // ---------- прицеливание, отдача, раскачка ----------
-const scopeFov = (d) => THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(toRad(BASE_FOV / 2)) / d.zoom));
+const scopeFov = (d) => d.scopeFov || THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(toRad(BASE_FOV / 2)) / d.zoom));
 let scoped = false, lastWeaponId = null;
 
 function updateAim(dt, time) {
@@ -1127,6 +1127,7 @@ function updateViewModel(dt) {
   viewModel.position.lerpVectors(vmHip, vmAds, e);
   viewModel.rotation.set(0.03 * (1 - e), 0.06 * (1 - e), 0);
   viewModel.visible = !scoped;
+  if (vmArm?.group) vmArm.group.visible = aimAmt < 0.6; // у глаза предплечье закрывает пол-экрана
 }
 
 // ---------- VR: оптика СВ-98 рисуется в текстуру на линзе ----------
@@ -1136,7 +1137,7 @@ function renderScopeLens() {
   if (!g?.lens || !g.group.visible) return;
   if (!scopeRT) {
     scopeRT = new THREE.WebGLRenderTarget(512, 512);
-    scopeCam = new THREE.PerspectiveCamera(5.5, 1, 1.2, 300); // поле зрения прицела 7×
+    scopeCam = new THREE.PerspectiveCamera(scopeFov(arsenal.current.def), 1, 1.2, 300); // поле зрения прицела 7×
   }
   g.lens.getWorldPosition(scopeCam.position);
   weaponHand.getWorldQuaternion(scopeCam.quaternion);
@@ -1337,6 +1338,17 @@ function updateCharacter(dt) {
     u.wrist?.update?.(wristInfo);
   }
   if (shadowBlob) shadowBlob.position.set(headPos.x, 0.012, headPos.z);
+}
+
+// отладка: ?debug — повернуть взгляд и выбрать оружие из консоли
+if (/[?&]debug\b/.test(location.search)) {
+  window.vrTirDebug = {
+    look(yawDeg, pitchDeg = 0) { yaw = toRad(yawDeg); pitch = toRad(pitchDeg); },
+    aim(on = true) { aimHeld = on; },
+    fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
+    select(i) { arsenal.select(i); },
+    get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
+  };
 }
 
 addEventListener('resize', () => {

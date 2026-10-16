@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const LANE_ANGLE = Math.PI * 1.5 + Math.PI / 16; // направление дальнего рубежа (281.25°), см. range.js
+
 // Окружение VR-тира: пол, сетка, неоновые колонны, звёзды, кольца в небе
 export function buildEnvironment(scene) {
   scene.background = new THREE.Color(0x070b1a);
@@ -103,6 +105,7 @@ export function buildEnvironment(scene) {
     let d = Math.abs(a - Math.PI * 1.5) % (Math.PI * 2);
     if (d > Math.PI) d = Math.PI * 2 - d;
     if (d < 0.22) continue; // не закрываем солнце
+    if (Math.abs(a - LANE_ANGLE) < 0.16) continue; // и дальний рубеж
     const r = 48 + Math.random() * 8, w = 2 + Math.random() * 3, h = 3 + Math.random() * 10;
     q.setFromAxisAngle(yAx, -a);
     pv.set(Math.cos(a) * r, h / 2, Math.sin(a) * r);
@@ -265,6 +268,7 @@ export function buildEnvironment(scene) {
     let d = Math.abs(a - SUN_ANGLE) % (Math.PI * 2);
     if (d > Math.PI) d = Math.PI * 2 - d;
     if (d < 0.2) continue; // не закрываем солнце
+    if (Math.abs(a - LANE_ANGLE) < 0.36) continue; // и гонги дальнего рубежа
     const rad = 60 + Math.random() * 35;
     const height = 10 + Math.random() * 12;
     const baseR = 10 + Math.random() * 8;
