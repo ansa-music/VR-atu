@@ -7,7 +7,7 @@ import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
 import { initializeMultiplayerPresence } from './multiplayer-presence.js';
 import { createSharedArena } from './multiplayer-arena.js';
-import { tintWeapon, skinColor, skinId } from './skins.js';
+import { tintWeapon, tintCharacter, skinId } from './skins.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -471,6 +471,7 @@ const controllers = [0, 1].map((i) => {
     if (c.userData.hand) c.remove(c.userData.hand.group);
     c.userData.hand = safeCall(charMod.createHand, { side, color });
     if (c.userData.hand?.group) c.add(c.userData.hand.group);
+    tintCharacter(c.userData.hand, skinId(window.vrAtuSelectedSkin));
     if (c.userData.wrist) { c.remove(c.userData.wrist.group); c.userData.wrist = null; }
     if (side === 'left') {
       c.userData.wrist = safeCall(charMod.createWristHud);
@@ -502,7 +503,8 @@ let chosenSkin = skinId(window.vrAtuSelectedSkin);
 function applySelectedSkin(id) {
   chosenSkin = skinId(id);
   tintWeapon(vmWeapon, chosenSkin);
-  for (const c of controllers) tintWeapon(c.userData.weapon, chosenSkin);
+  tintCharacter(vmArm, chosenSkin);
+  for (const c of controllers) { tintWeapon(c.userData.weapon, chosenSkin); tintCharacter(c.userData.hand, chosenSkin); }
 }
 applySelectedSkin(chosenSkin);
 addEventListener('skin:changed', e => applySelectedSkin(e.detail?.skin));
