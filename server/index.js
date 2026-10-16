@@ -81,17 +81,23 @@ function handle(player, msg) {
     case 'player:shot': {
       if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
       const now = Date.now();
-      if (now - player.lastShotAt < 110) return;
-      player.lastShotAt = now;
+      // Classic target range retains its existing 110 ms shot limit.
+      // PvP uses per-weapon limits in pvpShoot (AK automatic is ~92 ms).
+      if (room.mode !== 'pvp' && now - player.lastShotAt < 110) return;
       if (!player.lastPosition || !Array.isArray(msg.origin) ||
           msg.origin.length !== 3 ||
-          !msg.origin.every((v, i) => Number.isFinite(v) && Math.abs(v - player.lastPosition[i]) <= 2.5)) {
+          !msg.origin.every((v, i) => Number.isFinite(v) && Math.abs(v - player.lastPosition[i]) <=
+            (room.mode === 'pvp' ? 1.45 : 2.5))) {
         return send(player.socket, 'error', { code: 'UNVERIFIED_SHOT_ORIGIN' });
       }
       const result = room.mode === 'pvp'
         ? pvpShoot(room, room.players.get(player.id), msg, now)
         : shoot(room, player.id, msg, now);
+      // Normal cooldown rejections are expected with network jitter; don't
+      // flood every player's lobby with error notifications.
+      if (result.error === 'WEAPON_COOLDOWN') return;
       if (result.error) return send(player.socket, 'error', { code: result.error });
+      player.lastShotAt = now;
       broadcast(room, 'shot:result', result);
       if (result.hit) {
         if (room.mode === 'targets') {
@@ -175,7 +181,16 @@ const arenaTimer = setInterval(() => {
     const previous = room.phase;
     rooms.tick(room);
     if (previous !== room.phase) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
-    if (room.mode === 'pvp' && tickPvp(room, Date.now())) broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+    if (room.mode === 'pvp' && tickPvp(room, Date.now())) {
+      for (const member of room.players.values()) {
+        const peer = peers.get(member.id);
+        if (peer && member.spawnSeq !== peer.spawnSeq) {
+          peer.spawnSeq = member.spawnSeq;
+          peer.lastPosition = [...member.spawn];
+        }
+      }
+      broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+    }
     if (room.mode === 'targets' && tickArena(room, Date.now())) broadcast(room, 'targets:update', { targets: targetsSnapshot(room) });
   }
 }, 100);
