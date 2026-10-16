@@ -5,6 +5,7 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -40,6 +41,7 @@ camera.rotation.order = 'YXZ';
 const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
+const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
 
 const env = buildEnvironment(scene);
 const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
@@ -601,6 +603,7 @@ renderer.setAnimationLoop(() => {
   updateHead();
   updateMovement(dt);
   updateHead();
+  updateMultiplayerPresence(performance.now(), dt);
 
   if (state === 'countdown') updateCountdown(dt);
 
