@@ -18,6 +18,7 @@ export function createSharedArena(scene) {
   let serverOffset = 0;
   let ownId = null;
   let players = [];
+  let me = null;
   let clientSend = null;
   let lastShot = 0;
 
@@ -30,6 +31,7 @@ export function createSharedArena(scene) {
     phase = room?.phase || 'lobby';
     if (!room) { clear(); players = []; ownId = null; return; }
     players = room.players || [];
+    me = players.find(p => p.id === ownId) || null;
     endsAt = room.endsAt;
     serverOffset = room.serverTime - Date.now();
     if (phase !== 'playing') clear();
@@ -77,6 +79,8 @@ export function createSharedArena(scene) {
   return {
     get active() { return active; },
     get playing() { return active && phase === 'playing'; },
+    get score() { return me?.score || 0; },
+    get timeLeft() { return phase === 'playing' ? Math.max(0, ((endsAt || 0) - Date.now() - serverOffset) / 1000) : 0; },
     fire,
     update(dt) {
       if (!active) return;
