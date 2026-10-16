@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MultiplayerClient } from './multiplayer.js';
+import { MultiplayerClient } from './multiplayer.js?v=atu-roomfix-20261016c';
 import { createRemoteAvatar, skinId } from './skins.js';
 
 // Experimental network presence. Solo gameplay, scoring and targets remain LOCAL.
