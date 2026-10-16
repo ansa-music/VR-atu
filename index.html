@@ -307,9 +307,9 @@
       </section>
       <section id="mp-section" aria-label="Мультиплеер, экспериментальная версия">
         <h2>МУЛЬТИПЛЕЕР · BETA</h2>
-        <p style="font-size:13px;color:#a9b6e6">Экспериментальный мультиплеер: общие мишени, сетевые очки и присутствие игроков. Для игры нужен отдельный сервер. Нужен отдельный WebSocket-сервер.</p>
+        <p style="font-size:13px;color:#a9b6e6">Создайте комнату и поделитесь кодом с друзьями. Онлайн-подключение станет доступно после запуска сервера.</p>
         <div id="mp-panel">
-          <input id="mp-server" type="url" placeholder="wss://адрес-вашего-сервера" aria-label="Адрес сервера" autocomplete="off">
+          <details style="margin-bottom:8px"><summary style="color:#8fa3d9;cursor:pointer;font-size:12px">Дополнительные настройки подключения</summary><input id="mp-server" type="url" placeholder="wss://сервер-для-тестирования" aria-label="Адрес тестового сервера" autocomplete="off"></details>
           <input id="mp-name" maxlength="20" placeholder="Имя игрока" aria-label="Имя игрока">
           <input id="mp-join-code" maxlength="6" placeholder="Код комнаты" aria-label="Код комнаты">
           <button type="button" id="mp-create">Создать комнату</button>
@@ -320,7 +320,7 @@
         <div id="mp-ranking" aria-live="polite"></div>
         <button type="button" id="mp-start" hidden>Запустить сетевой таймер</button>
         <button type="button" id="mp-leave">Покинуть комнату</button>
-        <p id="mp-status" role="status">Для мультиплеера требуется запущенный сервер.</p>
+        <p id="mp-status" role="status">Подготовлено подключение к серверу. Онлайн-сервер пока не развёрнут.</p>
       </section>
       <p class="ov-foot">Кнопка «?» в левом верхнем углу вернёт эту справку.</p>
     </div>
