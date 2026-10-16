@@ -5,7 +5,7 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-roomfix-20261016c';
 import { createSharedArena } from './multiplayer-arena.js';
 import { CombatController, shotSpread } from './combat.js';
 import { tintWeapon, tintCharacter, skinId } from './skins.js';
