@@ -63,6 +63,17 @@ export function initializeMultiplayerPresence(scene, camera) {
         }
       }
     }
+    for (const p of players) {
+      const avatar = participants.get(p.id);
+      if (!avatar) continue;
+      avatar.group.visible = p.alive !== false;
+      if (Array.isArray(p.spawn) && p.spawnSeq && avatar.spawnSeq !== p.spawnSeq) {
+        avatar.spawnSeq = p.spawnSeq;
+        avatar.target.fromArray(p.spawn);
+        avatar.group.position.copy(avatar.target);
+        avatar.lastSeen = performance.now();
+      }
+    }
     for (const [id, avatar] of participants) {
       if (!ids.has(id)) { scene.remove(avatar.group); participants.delete(id); remoteSkins.delete(id); remoteTeams.delete(id); }
     }
