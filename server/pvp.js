@@ -1,4 +1,4 @@
-import { chooseSpawn, walkable, segmentHitsObstacle, SPAWN_SHIELD_MS, RESPAWN_MS } from '../js/pvp-layout.js';
+import { chooseSpawn, walkable, segmentHitsObstacle, SPAWN_SHIELD_MS, RESPAWN_MS } from './pvp-layout.js';
 
 const MAX_RANGE = 40;
 const HEAD_RADIUS = 0.245;
