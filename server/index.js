@@ -83,6 +83,16 @@ function handle(player, msg) {
       }
       break;
     }
+    case 'player:skin': {
+      if (!room) return send(player.socket, 'error', { code: 'NOT_IN_ROOM' });
+      const allowed = ['cyan', 'crimson', 'gold', 'obsidian'];
+      if (!allowed.includes(msg.skin)) return send(player.socket, 'error', { code: 'INVALID_SKIN' });
+      const member = room.players.get(player.id);
+      if (member.skin === msg.skin) return;
+      member.skin = msg.skin;
+      broadcast(room, 'room:update', { room: rooms.snapshot(room) });
+      break;
+    }
     case 'player:pose': {
       if (!room) return;
       const now = Date.now();
