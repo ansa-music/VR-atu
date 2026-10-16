@@ -184,15 +184,16 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 export function createWristHud() {
+  const W = 256, H = 176;   // нижний ряд — оружие
   const canvas = document.createElement('canvas');
-  canvas.width = 256; canvas.height = 128;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.MeshBasicMaterial({
     map: tex, transparent: true, fog: false, depthWrite: false, side: THREE.DoubleSide,
   });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.045), mat);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.09 * H / W), mat);   // пропорции холста
   mesh.rotation.x = -1.0;   // смотрит вверх и назад, к глазам
   mesh.renderOrder = 10;
   const group = new THREE.Group();
@@ -200,10 +201,10 @@ export function createWristHud() {
   group.position.set(0, 0.035, 0.13);
   group.add(mesh);
 
-  let ls = null, lt = null, lm = null, lk = null;
-  function draw(score, t, mult, mk) {
-    ctx.clearRect(0, 0, 256, 128);
-    roundRect(ctx, 4, 4, 248, 120, 14);
+  let ls = null, lt = null, lm = null, lk = null, lwn = null, lwa = null, lws = null;
+  function draw(score, t, mult, mk, wn, wa, ws) {
+    ctx.clearRect(0, 0, W, H);
+    roundRect(ctx, 4, 4, W - 8, H - 8, 14);
     ctx.fillStyle = 'rgba(8,14,40,0.62)';
     ctx.fill();
     ctx.lineWidth = 4;
@@ -242,17 +243,49 @@ export function createWristHud() {
     ctx.arc(228, 104, 7, 0, Math.PI * 2);
     ctx.fillStyle = mk ? '#34e89e' : '#5a6070';
     ctx.fill();
+    // оружие: название слева, патроны справа, статус — янтарём ниже
+    if (wn || wa || ws) {
+      ctx.strokeStyle = 'rgba(62,197,255,0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(18, 122); ctx.lineTo(238, 122);
+      ctx.stroke();
+      let aw = 0;
+      if (wa) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 24px system-ui, sans-serif';
+        ctx.fillText(wa, 238, 146, 130);
+        aw = Math.min(130, ctx.measureText(wa).width) + 12;
+      }
+      if (wn) {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#9fdcff';
+        ctx.font = 'bold 19px system-ui, sans-serif';
+        ctx.fillText(wn, 18, 145, Math.max(40, 220 - aw));
+      }
+      if (ws) {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#ffb23f';
+        ctx.font = 'bold 14px system-ui, sans-serif';
+        ctx.fillText(ws, 18, 164, 220);
+      }
+    }
     tex.needsUpdate = true;
   }
-  draw(0, 0, 1, false);
+  draw(0, 0, 1, false, '', '', '');
 
   return {
     group,
-    update({ score = 0, timeLeft = 0, multiplier = 1, mk = false } = {}) {
+    update({ score = 0, timeLeft = 0, multiplier = 1, mk = false, weapon = null } = {}) {
       const t = Math.max(0, Math.ceil(timeLeft));
-      if (score === ls && t === lt && multiplier === lm && mk === lk) return;
-      ls = score; lt = t; lm = multiplier; lk = mk;
-      draw(score, t, multiplier, mk);
+      const wn = weapon && weapon.name != null ? String(weapon.name) : '';
+      const wa = weapon && weapon.ammo != null ? String(weapon.ammo) : '';
+      const ws = weapon && weapon.status ? String(weapon.status) : '';
+      if (score === ls && t === lt && multiplier === lm && mk === lk &&
+          wn === lwn && wa === lwa && ws === lws) return;
+      ls = score; lt = t; lm = multiplier; lk = mk; lwn = wn; lwa = wa; lws = ws;
+      draw(score, t, multiplier, mk, wn, wa, ws);
     },
   };
 }

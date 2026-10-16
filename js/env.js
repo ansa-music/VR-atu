@@ -44,6 +44,7 @@ export function buildEnvironment(scene) {
   const PILLARS = 16;
   const pillarGeo = new THREE.BoxGeometry(0.3, 6, 0.3);
   const pillarMats = [];
+  const colliders = []; // колонны останавливают пули
   // металлические основания/капители и светящиеся пояса — инстансами
   const metalMat = new THREE.MeshStandardMaterial({ color: 0x1a1f3a, metalness: 0.9, roughness: 0.3 });
   const blocks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.7, 0.35, 0.7), metalMat, PILLARS * 2);
@@ -61,6 +62,7 @@ export function buildEnvironment(scene) {
     pillar.position.set(x, 3, z);
     scene.add(pillar);
     pillarMats.push(mat);
+    colliders.push(pillar);
     col.setHSL(i / PILLARS, 0.9, 0.6);
     blocks.setMatrixAt(i * 2, m4.makeTranslation(x, 0.175, z));
     blocks.setMatrixAt(i * 2 + 1, m4.makeTranslation(x, 6.1, z));
@@ -338,5 +340,5 @@ export function buildEnvironment(scene) {
     dustAttr.needsUpdate = true;
   }
 
-  return { update };
+  return { update, colliders };
 }

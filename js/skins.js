@@ -2,10 +2,10 @@ import * as THREE from 'three';
 
 // Cosmetic-only palettes. Existing weapon geometry, recoil and hit detection stay unchanged.
 export const SKINS = Object.freeze({
-  cyan: { name: 'CYBER ICE', color: 0x3ec5ff, metal: 0x29394c, dark: 0x101927 },
-  crimson: { name: 'CRIMSON', color: 0xff456d, metal: 0x4b2234, dark: 0x1e101d },
-  gold: { name: 'ROYAL GOLD', color: 0xffd23f, metal: 0x6a5634, dark: 0x25201b },
-  obsidian: { name: 'OBSIDIAN', color: 0x9c76ff, metal: 0x242038, dark: 0x0c0a15 },
+  cyan: { name: 'КИБЕР-ЛЁД', color: 0x3ec5ff, metal: 0x29394c, dark: 0x101927 },
+  crimson: { name: 'БАГРОВЫЙ', color: 0xff456d, metal: 0x4b2234, dark: 0x1e101d },
+  gold: { name: 'КОРОЛЕВСКОЕ ЗОЛОТО', color: 0xffd23f, metal: 0x6a5634, dark: 0x25201b },
+  obsidian: { name: 'ОБСИДИАН', color: 0x9c76ff, metal: 0x242038, dark: 0x0c0a15 },
 });
 export const DEFAULT_SKIN = 'cyan';
 export function skinId(id) { return Object.hasOwn(SKINS, id) ? id : DEFAULT_SKIN; }

@@ -149,7 +149,7 @@ export function createMenu() {
     legend(268);
     text(ctx, '5 попаданий подряд — множитель до x4', cx, 322, 34, '#c9d6ff', { maxW: 920 });
     // подсказка по управлению прямо над кнопкой
-    text(ctx, 'ПК: Enter или клик по кнопке  ·  VR/МК: выстрел в панель', cx, 364, 28, '#8fa3d9', { maxW: 920 });
+    text(ctx, 'ПК: Enter или клик  ·  VR/МК: выстрел в панель  ·  1–5 — оружие', cx, 364, 28, '#8fa3d9', { maxW: 920 });
     button('▶  ВЫСТРЕЛИ — СТАРТ');
     texture.needsUpdate = true;
   }

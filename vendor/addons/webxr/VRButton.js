@@ -13,7 +13,7 @@ class VRButton {
 				session.addEventListener( 'end', onSessionEnded );
 
 				await renderer.xr.setSession( session );
-				button.textContent = 'EXIT VR';
+				button.textContent = 'ВЫЙТИ ИЗ VR';
 
 				currentSession = session;
 
@@ -23,7 +23,7 @@ class VRButton {
 
 				currentSession.removeEventListener( 'end', onSessionEnded );
 
-				button.textContent = 'ENTER VR';
+				button.textContent = 'ВОЙТИ В VR';
 
 				currentSession = null;
 
@@ -34,10 +34,10 @@ class VRButton {
 			button.style.display = '';
 
 			button.style.cursor = 'pointer';
-			button.style.left = 'calc(50% - 50px)';
-			button.style.width = '100px';
+			button.style.left = 'calc(50% - 75px)';
+			button.style.width = '150px';
 
-			button.textContent = 'ENTER VR';
+			button.textContent = 'ВОЙТИ В VR';
 
 			// WebXR's requestReferenceSpace only works if the corresponding feature
 			// was requested at session creation time. For simplicity, just ask for
@@ -95,8 +95,8 @@ class VRButton {
 			button.style.display = '';
 
 			button.style.cursor = 'auto';
-			button.style.left = 'calc(50% - 75px)';
-			button.style.width = '150px';
+			button.style.left = 'calc(50% - 110px)';
+			button.style.width = '220px';
 
 			button.onmouseenter = null;
 			button.onmouseleave = null;
@@ -109,7 +109,7 @@ class VRButton {
 
 			disableButton();
 
-			button.textContent = 'VR NOT SUPPORTED';
+			button.textContent = 'VR НЕ ПОДДЕРЖИВАЕТСЯ';
 
 		}
 
@@ -119,7 +119,7 @@ class VRButton {
 
 			console.warn( 'Exception when trying to call xr.isSessionSupported', exception );
 
-			button.textContent = 'VR NOT ALLOWED';
+			button.textContent = 'VR ЗАПРЕЩЁН';
 
 		}
 
@@ -168,17 +168,17 @@ class VRButton {
 			if ( window.isSecureContext === false ) {
 
 				message.href = document.location.href.replace( /^http:/, 'https:' );
-				message.innerHTML = 'WEBXR NEEDS HTTPS'; // TODO Improve message
+				message.innerHTML = 'ДЛЯ WEBXR НУЖЕН HTTPS'; // TODO Improve message
 
 			} else {
 
 				message.href = 'https://immersiveweb.dev/';
-				message.innerHTML = 'WEBXR NOT AVAILABLE';
+				message.innerHTML = 'WEBXR НЕДОСТУПЕН';
 
 			}
 
-			message.style.left = 'calc(50% - 90px)';
-			message.style.width = '180px';
+			message.style.left = 'calc(50% - 110px)';
+			message.style.width = '220px';
 			message.style.textDecoration = 'none';
 
 			stylizeElement( message );

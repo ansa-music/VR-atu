@@ -69,7 +69,7 @@ export function createFx(scene) {
   }
 
   // Всплывающий текст очков
-  function popup(position, text, cssColor) {
+  function popup(position, text, cssColor, scale = 1) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 128;
@@ -87,11 +87,11 @@ export function createFx(scene) {
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, fog: false });
     const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(0.8, 0.4, 1);
+    sprite.scale.set(0.8 * scale, 0.4 * scale, 1); // дальние гонги — крупнее
     sprite.position.copy(position);
     sprite.renderOrder = 10;
     scene.add(sprite);
-    popups.push({ sprite, mat, tex, life: POPUP_LIFE });
+    popups.push({ sprite, mat, tex, life: POPUP_LIFE, rise: 0.8 * scale });
   }
 
   // Луч выстрела
@@ -178,7 +178,7 @@ export function createFx(scene) {
         popups.splice(i, 1);
         continue;
       }
-      p.sprite.position.y += 0.8 * dt;
+      p.sprite.position.y += p.rise * dt;
       p.mat.opacity = p.life / POPUP_LIFE;
     }
     for (let i = tracers.length - 1; i >= 0; i--) {
