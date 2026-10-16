@@ -1,3 +1,4 @@
+import { MULTIPLAYER_SERVER_URL } from './server-config.js';
 // Optional multiplayer lobby UI. The existing single-player button stays unchanged.
 const $ = id => document.getElementById(id);
 const status = $('mp-status');
@@ -8,6 +9,7 @@ const start = $('mp-start');
 const inputName = $('mp-name');
 const inputCode = $('mp-join-code');
 const inputServer = $('mp-server');
+const serverUrl = MULTIPLAYER_SERVER_URL.trim();
 let myId = null;
 let room = null;
 
@@ -33,8 +35,8 @@ function render() {
   showStatus(room.phase === 'playing' ? 'Раунд запущен (демо сетевого лобби)' : room.phase === 'finished' ? 'Раунд завершён' : 'Комната создана. Пригласите друзей по коду.');
 }
 function submit(action) {
-  const url = inputServer.value.trim();
-  if (!/^wss?:\/\//i.test(url)) { showStatus('Укажите адрес сервера ws:// или wss://'); return; }
+  const url = serverUrl || inputServer.value.trim();
+  if (!/^wss?:\/\//i.test(url)) { showStatus('Сервер ещё не опубликован. Для тестов откройте дополнительные настройки и укажите URL.'); return; }
   if (location.protocol === 'https:' && !url.startsWith('wss://')) {
     showStatus('На HTTPS-сайте нужен защищённый сервер wss://');
     return;
@@ -71,3 +73,5 @@ window.addEventListener('mp:scoreboard', e => {
 });
 window.addEventListener('mp:error', e => { showStatus('Ошибка сети: ' + (e.detail.code || 'UNKNOWN')); });
 render();
+
+if (serverUrl && inputServer) { inputServer.value = serverUrl; inputServer.disabled = true; showStatus('Сервер настроен — создайте комнату или войдите по коду.'); }
