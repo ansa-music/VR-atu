@@ -105,3 +105,18 @@ test('browser and Render container use byte-identical cover layouts',async()=>{
   ]);
   assert.equal(server,browser);
 });
+
+
+test('four teammates never overlap at round start',()=>{
+  const store=new RoomStore({now:()=>1000});
+  const host=player('host');
+  const room=store.create(host,'Host',{mode:'pvp',maxPlayers:8});
+  for(let n=1;n<8;n++)store.join(room.code,player('p'+n),'Игрок'+n);
+  store.start(room,host.id);
+  startPvp(room,1000);
+  for(const team of ['alpha','bravo']){
+    const positions=[...room.players.values()].filter(p=>p.team===team)
+      .map(p=>p.spawn[0]+','+p.spawn[2]);
+    assert.equal(new Set(positions).size,positions.length);
+  }
+});
