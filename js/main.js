@@ -645,7 +645,9 @@ renderer.setAnimationLoop(() => {
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
-  board.update({ score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
+  board.update(sharedArena.active
+    ? { score: sharedArena.score, timeLeft: sharedArena.timeLeft, multiplier: 1, timeFrac: sharedArena.timeLeft / ROUND_TIME }
+    : { score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
 
   renderer.render(scene, camera);
   if (!ready) { ready = true; emit('game:ready'); }
