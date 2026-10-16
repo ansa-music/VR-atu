@@ -5,6 +5,10 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js';
+import { createSharedArena } from './multiplayer-arena.js';
+import { CombatController, shotSpread } from './combat.js';
+import { tintWeapon, tintCharacter, skinId } from './skins.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -40,6 +44,18 @@ camera.rotation.order = 'YXZ';
 const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
+const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
+const sharedArena = createSharedArena(scene);
+const combat = new CombatController();
+let isAiming = false, isCrouching = false, jumpHeight = 0, jumpVelocity = 0, recoilKick = 0;
+let jumpRequested = false;
+const GRAVITY = 9.8, JUMP_SPEED = 4.5;
+const combatHud = document.createElement('div');
+combatHud.id = 'combat-hud';
+combatHud.setAttribute('aria-live', 'off');
+combatHud.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:8;background:rgba(7,11,26,.78);border:1px solid #3ec5ff88;padding:12px 18px;border-radius:12px;color:white;font:700 16px system-ui;pointer-events:none';
+combatHud.textContent = '24 / 144';
+document.body.appendChild(combatHud);
 
 const env = buildEnvironment(scene);
 const gfx = safeCall(gfxMod.setupGraphics, renderer, scene);
@@ -63,6 +79,23 @@ menu.mesh.position.set(0, EYE_HEIGHT, -3);
 menu.mesh.userData.readyAt = 0;
 menu.showStart(ROUND_TIME);
 scene.add(menu.mesh);
+// The solo VR panel must not obscure the multiplayer targets.
+addEventListener('mp:room:update', e => {
+  if (e.detail?.room?.phase === 'playing') menu.mesh.visible = false;
+});
+addEventListener('mp:room:joined', e => {
+  if (e.detail?.room?.phase === 'playing') menu.mesh.visible = false;
+});
+const restoreSoloMenu = () => {
+  if (state === 'menu' || state === 'over') {
+    menu.showStart(ROUND_TIME);
+    menu.mesh.visible = true;
+  }
+};
+addEventListener('mp:room:left', restoreSoloMenu);
+addEventListener('mp:status', e => {
+  if (e.detail?.state === 'disconnected') restoreSoloMenu();
+});
 
 // ---------- состояние игры ----------
 let state = 'menu'; // menu | countdown | play | over
@@ -81,6 +114,7 @@ function setState(s) {
 
 // старт: сначала отсчёт 3-2-1, потом раунд
 function startGame() {
+  combat.reset();
   setState('countdown');
   countdown = 3;
   lastCount = -1;
@@ -284,6 +318,7 @@ const CENTER = new THREE.Vector2(0, 0);
 const BANNER_OFFSET = new THREE.Vector3(0, 0.6, 0);
 
 function shootables() {
+  if (sharedArena.active) return [];
   if (state === 'play') return targets.children;
   if (state === 'countdown') return [];
   return menu.mesh.visible ? [menu.mesh] : [];
@@ -291,6 +326,22 @@ function shootables() {
 
 // луч уже выставлен в raycaster
 function fire(from, controller) {
+  // Menus are free to interact with; ammunition applies only to active rounds.
+  const fighting = sharedArena.active ? sharedArena.playing : state === 'play';
+  if (sharedArena.active && !sharedArena.playing) return;
+  if (fighting) {
+    const result = combat.fire();
+    if (!result.ok) {
+      if (result.reason === 'empty') combat.reload();
+      return;
+    }
+    recoilKick = Math.min(0.16, recoilKick + (isAiming ? 0.016 : 0.038));
+    const [sx, sy] = shotSpread({ aiming: isAiming, moving: isMoving, jumping: jumpHeight > 0.02, crouching: isCrouching, shotIndex: combat.shotIndex });
+    const direction = raycaster.ray.direction;
+    direction.x += sx;
+    direction.y += sy;
+    direction.normalize();
+  }
   const hit = raycaster.intersectObjects(shootables(), false)[0];
   const end = hit ? hit.point : raycaster.ray.at(15, farPoint);
   const color = controller ? controller.userData.color : 0xffffff;
@@ -299,6 +350,13 @@ function fire(from, controller) {
   sfx.shot();
   vibrate(controller, 0.3, 40);
 
+  if (sharedArena.active) {
+    if (sharedArena.playing) {
+      // Server decides whether ray intersects a shared target and awards points.
+      sharedArena.fire(raycaster.ray.origin, raycaster.ray.direction);
+    }
+    return;
+  }
   if (state !== 'play') {
     if (hit && performance.now() >= menu.mesh.userData.readyAt) startGame();
     return;
@@ -363,7 +421,7 @@ const ndc = new THREE.Vector2();
 const locked = () => document.pointerLockElement === canvas;
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (renderer.xr.isPresenting) return;
+  if (renderer.xr.isPresenting || e.button !== 0) return;
   if (locked()) {
     fireFromScreen(CENTER);
   } else {
@@ -387,10 +445,11 @@ document.addEventListener('pointerlockchange', () => {
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space' && !e.repeat && !renderer.xr.isPresenting) {
-    e.preventDefault();
-    fireFromScreen(CENTER);
+    e.preventDefault(); jumpRequested = true;
   }
-  if (e.code === 'Enter' && !e.repeat && (state === 'menu' || state === 'over')) startGame();
+  if (e.code === 'KeyR' && !e.repeat) combat.reload();
+  if (e.code === 'ControlLeft' || e.code === 'KeyC') isCrouching = true;
+  if (e.code === 'Enter' && !e.repeat && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 
 // кнопка «Играть» на стартовом экране (клик пользователя — можно захватить мышь)
@@ -398,10 +457,13 @@ addEventListener('game:start', () => {
   if (!renderer.xr.isPresenting) {
     try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
   }
-  if (state === 'menu' || state === 'over') startGame();
+  if (!sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
+addEventListener('keyup', (e) => { keys.delete(e.code); if (e.code === 'ControlLeft' || e.code === 'KeyC') isCrouching = false; });
+addEventListener('blur', () => { keys.clear(); isAiming = false; isCrouching = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => { if (e.button === 2 && !renderer.xr.isPresenting) isAiming = true; });
+addEventListener('pointerup', e => { if (e.button === 2) isAiming = false; });
 
 // ---------- VR-контроллеры ----------
 function makeGun(color) {
@@ -441,6 +503,7 @@ const controllers = [0, 1].map((i) => {
     if (c.userData.hand) c.remove(c.userData.hand.group);
     c.userData.hand = safeCall(charMod.createHand, { side, color });
     if (c.userData.hand?.group) c.add(c.userData.hand.group);
+    tintCharacter(c.userData.hand, skinId(window.vrAtuSelectedSkin));
     if (c.userData.wrist) { c.remove(c.userData.wrist.group); c.userData.wrist = null; }
     if (side === 'left') {
       c.userData.wrist = safeCall(charMod.createWristHud);
@@ -449,6 +512,8 @@ const controllers = [0, 1].map((i) => {
   });
   c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
   c.addEventListener('selectstart', () => fireFromController(c));
+  c.addEventListener('squeezestart', () => { if (c.userData.src?.handedness === 'left') combat.reload(); else isAiming = true; });
+  c.addEventListener('squeezeend', () => { isAiming = false; });
   rig.add(c);
   scene.add(dot);
   return c;
@@ -468,6 +533,16 @@ const vmWeapon = safeCall(weaponMod.createWeapon, { color: 0xff7ad9 });
 const vmArm = safeCall(charMod.createArm, { color: 0xff7ad9 });
 if (vmWeapon?.group) viewModel.add(vmWeapon.group);
 if (vmArm?.group) viewModel.add(vmArm.group);
+let chosenSkin = skinId(window.vrAtuSelectedSkin);
+function applySelectedSkin(id) {
+  chosenSkin = skinId(id);
+  tintWeapon(vmWeapon, chosenSkin);
+  tintCharacter(vmArm, chosenSkin);
+  for (const c of controllers) { tintWeapon(c.userData.weapon, chosenSkin); tintCharacter(c.userData.hand, chosenSkin); }
+}
+applySelectedSkin(chosenSkin);
+addEventListener('skin:changed', e => applySelectedSkin(e.detail?.skin));
+
 viewModel.visible = !!vmWeapon?.group;
 let isMoving = false;
 
@@ -542,18 +617,24 @@ function updateMovement(dt) {
   const moving = move.lengthSq() > 0.0001;
   isMoving = moving;
   if (moving) {
-    rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt);
-    rig.position.addScaledVector(right, move.x * WALK_SPEED * dt);
+    rig.position.addScaledVector(fwd, move.y * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
+    rig.position.addScaledVector(right, move.x * WALK_SPEED * dt * (isCrouching ? 0.48 : 1));
     const r = Math.hypot(rig.position.x, rig.position.z);
     if (r > ARENA) rig.position.multiplyScalar(ARENA / r);
     rig.position.y = 0;
   }
 
+  if (jumpRequested && jumpHeight <= 0 && !renderer.xr.isPresenting) jumpVelocity = JUMP_SPEED;
+  jumpRequested = false;
+  if (!renderer.xr.isPresenting) {
+    jumpHeight = Math.max(0, jumpHeight + jumpVelocity * dt);
+    jumpVelocity = jumpHeight > 0 ? jumpVelocity - GRAVITY * dt : 0;
+  }
   // ПК: камера по мыши/клавишам + лёгкое покачивание при ходьбе
   if (!renderer.xr.isPresenting) {
     walkPhase = moving ? walkPhase + dt * 9 * Math.sqrt(move.lengthSq()) : 0;
-    camera.position.set(0, EYE_HEIGHT + Math.sin(walkPhase) * 0.035, 0);
-    camera.rotation.set(pitch, yaw, 0);
+    camera.position.set(0, EYE_HEIGHT + jumpHeight - (isCrouching ? 0.48 : 0) + Math.sin(walkPhase) * 0.035, 0);
+    camera.rotation.set(pitch - recoilKick, yaw, 0);
   }
 }
 
@@ -601,6 +682,17 @@ renderer.setAnimationLoop(() => {
   updateHead();
   updateMovement(dt);
   updateHead();
+  updateMultiplayerPresence(performance.now(), dt);
+  sharedArena.update(dt);
+  combat.update(dt);
+  recoilKick = Math.max(0, recoilKick - dt * 0.55);
+  if (!renderer.xr.isPresenting) {
+    const targetFov = isAiming ? 51 : 70;
+    const nextFov = THREE.MathUtils.lerp(camera.fov, targetFov, Math.min(1, dt * 13));
+    if (Math.abs(camera.fov - nextFov) > 0.001) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
+  }
+  const ammo = combat.status;
+  combatHud.textContent = ammo.reloading ? 'ПЕРЕЗАРЯДКА…' : String(ammo.ammo).padStart(2, '0') + ' / ' + ammo.reserve + (isAiming ? '  ● ADS' : '') + (isCrouching ? '  ↓' : '') + (jumpHeight > 0.02 ? '  ↑' : '');
 
   if (state === 'countdown') updateCountdown(dt);
 
@@ -631,7 +723,9 @@ renderer.setAnimationLoop(() => {
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
-  board.update({ score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
+  board.update(sharedArena.active
+    ? { score: sharedArena.score, timeLeft: sharedArena.timeLeft, multiplier: 1, timeFrac: sharedArena.timeLeft / ROUND_TIME }
+    : { score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
 
   renderer.render(scene, camera);
   if (!ready) { ready = true; emit('game:ready'); }
@@ -643,8 +737,8 @@ emit('game:state', { state });
 const wristInfo = { score: 0, timeLeft: 0, multiplier: 1, mk: false };
 function updateCharacter(dt) {
   if (viewModel.visible) vmWeapon?.update?.(dt, { moving: isMoving });
-  wristInfo.score = score;
-  wristInfo.timeLeft = timeLeft;
+  wristInfo.score = sharedArena.active ? sharedArena.score : score;
+  wristInfo.timeLeft = sharedArena.active ? sharedArena.timeLeft : timeLeft;
   wristInfo.multiplier = multiplier();
   wristInfo.mk = mk.connected;
   for (const c of controllers) {
