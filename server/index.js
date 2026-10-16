@@ -69,6 +69,11 @@ function handle(player, msg) {
       const now = Date.now();
       if (now - player.lastShotAt < 110) return;
       player.lastShotAt = now;
+      if (!player.lastPosition || !Array.isArray(msg.origin) ||
+          msg.origin.length !== 3 ||
+          !msg.origin.every((v, i) => Number.isFinite(v) && Math.abs(v - player.lastPosition[i]) <= 2.5)) {
+        return send(player.socket, 'error', { code: 'UNVERIFIED_SHOT_ORIGIN' });
+      }
       const result = shoot(room, player.id, msg, now);
       if (result.error) return send(player.socket, 'error', { code: result.error });
       broadcast(room, 'shot:result', result);
@@ -84,6 +89,7 @@ function handle(player, msg) {
       if (now - player.lastPoseAt < 45) return;
       if (!validVector(msg.position, 3, 50) || !validVector(msg.rotation, 4, 1)) return;
       player.lastPoseAt = now;
+      player.lastPosition = [...msg.position];
       broadcast(room, 'player:pose', { id: player.id, position: msg.position, rotation: msg.rotation }, player.id);
       break;
     }
