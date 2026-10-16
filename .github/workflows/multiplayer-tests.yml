@@ -31,3 +31,8 @@ jobs:
       - run: node --check ../js/combat.js
       - run: node --check ../js/weapon.js
       - run: node --check ../js/character.js
+      - run: node --check pvp.js
+      - run: node --check pvp-layout.js
+      - run: node --check ../js/pvp-map.js
+      - run: node --check ../js/multiplayer-arena.js
+      - run: node --check ../js/multiplayer-presence.js

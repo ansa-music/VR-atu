@@ -5,10 +5,10 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-mpnav-20261016d';
-import { createSharedArena } from './multiplayer-arena.js';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-bastion-v2';
+import { createSharedArena } from './multiplayer-arena.js?v=atu-bastion-v2';
 import { createPvpMap } from './pvp-map.js';
-import { slideMovement } from './pvp-layout.js';
+import { slideMovement } from './pvp-layout.js?v=atu-bastion-v2';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 
@@ -56,6 +56,32 @@ rig.add(camera);
 scene.add(rig);
 const updateMultiplayerPresence = initializeMultiplayerPresence(scene, camera);
 const sharedArena = createSharedArena(scene);
+
+// PvP: подсказки о попаданиях, хедшотах и убийствах
+const pvpFeed = document.createElement('div');
+pvpFeed.id = 'pvp-feedback';
+pvpFeed.style.cssText = 'position:fixed;top:14%;left:50%;transform:translateX(-50%);z-index:9;color:#effaff;text-shadow:0 1px 9px #050813;font:800 24px system-ui;text-align:center;pointer-events:none;opacity:0';
+document.body.appendChild(pvpFeed);
+let pvpFeedbackTime = 0;
+addEventListener('mp:shot-feedback', event => {
+  const shot = event.detail;
+  if (!shot || !shot.hit || !pvpEnabled) return;
+  if (shot.playerId === multiplayerPlayerId) {
+    pvpFeed.textContent = shot.eliminated ? 'ПРОТИВНИК УНИЧТОЖЕН  +1' :
+      shot.headshot ? 'ПОПАДАНИЕ В ГОЛОВУ  -' + shot.damage : 'ПОПАДАНИЕ  -' + shot.damage;
+    pvpFeed.style.color = shot.eliminated ? '#ffd23f' : '#9fe7ff';
+    pvpFeedbackTime = performance.now() + 1100;
+    hud?.hitMarker(shot.eliminated ? 'kill' : 'hit');
+    if (shot.position) {
+      fx.popup?.(new THREE.Vector3(...shot.position),
+        shot.eliminated ? 'ФРАГ!' : '-' + shot.damage, shot.eliminated ? '#ffd23f' : '#3ec5ff');
+    }
+  } else if (shot.victimId === multiplayerPlayerId) {
+    pvpFeed.textContent = shot.eliminated ? 'ВЫ УНИЧТОЖЕНЫ — ВОЗРОЖДЕНИЕ' : 'УРОН  -' + shot.damage;
+    pvpFeed.style.color = '#ff9b54';
+    pvpFeedbackTime = performance.now() + 1350;
+  }
+});
 
 const envBefore = new Set(scene.children);
 const env = buildEnvironment(scene);
@@ -1359,6 +1385,7 @@ renderer.setAnimationLoop(() => {
   updateViewModel(dt);
   updateCharacter(dt);
   updateHud();
+  pvpFeed.style.opacity = pvpEnabled && performance.now() < pvpFeedbackTime ? '1' : '0';
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
