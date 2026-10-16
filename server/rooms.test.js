@@ -9,7 +9,7 @@ test('room creation, join and host transfer', () => {
   const store = new RoomStore();
   const host = player(), guest = player();
   const room = store.create(host, 'Host');
-  assert.match(room.code, /^\\d{3}$/);
+  assert.match(room.code, /^\d{3}$/);
   store.join(room.code.toLowerCase(), guest, 'Guest');
   assert.equal(store.snapshot(room).players.length, 2);
   store.leave(host);
