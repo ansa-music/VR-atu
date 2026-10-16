@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MultiplayerClient } from './multiplayer.js?v=atu-mpnav-20261016d';
 import { skinId } from './skins.js';
-import { createCombatAvatar } from './combat-avatar.js';
+import { createCombatAvatar } from './combat-avatar.js?v=atu-anim-v1';
 
 // Single connection controls both room presence and remote characters.
 // Geometries/insignia textures are shared; each avatar disposes only its
