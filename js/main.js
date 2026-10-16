@@ -7,6 +7,7 @@ import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
 import { initializeMultiplayerPresence } from './multiplayer-presence.js';
 import { createSharedArena } from './multiplayer-arena.js';
+import { tintWeapon, skinColor, skinId } from './skins.js';
 
 const { sfx } = audio;
 const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -497,6 +498,15 @@ const vmWeapon = safeCall(weaponMod.createWeapon, { color: 0xff7ad9 });
 const vmArm = safeCall(charMod.createArm, { color: 0xff7ad9 });
 if (vmWeapon?.group) viewModel.add(vmWeapon.group);
 if (vmArm?.group) viewModel.add(vmArm.group);
+let chosenSkin = skinId(window.vrAtuSelectedSkin);
+function applySelectedSkin(id) {
+  chosenSkin = skinId(id);
+  tintWeapon(vmWeapon, chosenSkin);
+  for (const c of controllers) tintWeapon(c.userData.weapon, chosenSkin);
+}
+applySelectedSkin(chosenSkin);
+addEventListener('skin:changed', e => applySelectedSkin(e.detail?.skin));
+
 viewModel.visible = !!vmWeapon?.group;
 let isMoving = false;
 
