@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { buildEnvironment } from './env.js';
-import { sfx } from './sfx.js';
+import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
+
+const { sfx } = audio;
+const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
+const emit = (name, detail) => dispatchEvent(new CustomEvent(name, { detail }));
 
 const ROUND_TIME = 60;
 const MAX_TARGETS = 14;
@@ -51,36 +55,77 @@ menu.showStart(ROUND_TIME);
 scene.add(menu.mesh);
 
 // ---------- состояние игры ----------
-let state = 'menu'; // menu | play | over
-let score = 0, combo = 0, shots = 0, hits = 0;
+let state = 'menu'; // menu | countdown | play | over
+let score = 0, combo = 0, maxCombo = 0, shots = 0, hits = 0;
 let timeLeft = ROUND_TIME, elapsed = 0, spawnTimer = 0;
+let countdown = 0, lastCount = -1, goHide = 0, lastTickSec = 99, lastMult = 1, lastIntensity = -1;
 let best = 0;
 try { best = Number(localStorage.getItem('vr-tir-best')) || 0; } catch {}
 
 const multiplier = () => Math.min(4, 1 + Math.floor(combo / 5));
 
+function setState(s) {
+  state = s;
+  emit('game:state', { state: s });
+}
+
+// старт: сначала отсчёт 3-2-1, потом раунд
 function startGame() {
-  state = 'play';
-  score = combo = shots = hits = 0;
+  setState('countdown');
+  countdown = 3;
+  lastCount = -1;
+  score = combo = maxCombo = shots = hits = 0;
+  lastMult = 1;
+  lastTickSec = 99;
   timeLeft = ROUND_TIME;
   elapsed = 0;
   spawnTimer = 0.4;
   clearTargets();
-  menu.mesh.visible = false;
-  sfx.start();
+  menu.mesh.visible = true;
+  music.start();
+  music.setIntensity(0.3);
+  lastIntensity = 0.3;
   mk.send('S');
 }
 
+function updateCountdown(dt) {
+  countdown -= dt;
+  const n = Math.max(0, Math.ceil(countdown));
+  if (n !== lastCount) {
+    lastCount = n;
+    menu.showCountdown?.(n);
+    if (n > 0) sfx.tick?.();
+  }
+  if (countdown <= 0) {
+    setState('play');
+    (sfx.go || sfx.start)();
+    goHide = 0.6; // «ВПЕРЁД!» висит ещё чуть-чуть
+  }
+}
+
+function loadTop() {
+  try {
+    const t = JSON.parse(localStorage.getItem('vr-tir-top') || '[]');
+    return Array.isArray(t) ? t.filter(Number.isFinite) : [];
+  } catch { return []; }
+}
+
 function endGame() {
-  state = 'over';
+  setState('over');
   clearTargets();
+  music.stop();
   const newRecord = score > best;
   if (newRecord) {
     best = score;
     try { localStorage.setItem('vr-tir-best', String(best)); } catch {}
   }
+  let top = loadTop();
+  if (score > 0) {
+    top = [...top, score].sort((a, b) => b - a).slice(0, 5);
+    try { localStorage.setItem('vr-tir-top', JSON.stringify(top)); } catch {}
+  }
   const accuracy = shots ? Math.round((hits / shots) * 100) : 0;
-  menu.showResults({ score, best, accuracy, newRecord });
+  menu.showResults({ score, best, accuracy, newRecord, top, maxCombo });
   menu.mesh.visible = true;
   menu.mesh.userData.readyAt = performance.now() + 1200; // защита от случайного рестарта
   sfx.end();
@@ -187,7 +232,9 @@ function hitTarget(t, point, controller) {
   if (u.type === 'bomb') {
     score = Math.max(0, score - 5);
     combo = 0;
+    lastMult = 1;
     fx.burst(point, 0xff2244, 30);
+    fx.shockwave?.(point, 0xff2244);
     fx.popup(point, '−5', '#ff5a6e');
     sfx.bomb();
     vibrate(controller, 1, 250);
@@ -195,9 +242,18 @@ function hitTarget(t, point, controller) {
   } else {
     hits++;
     combo++;
-    const pts = (u.type === 'gold' ? 3 : 1) * multiplier();
+    maxCombo = Math.max(maxCombo, combo);
+    const m = multiplier();
+    const pts = (u.type === 'gold' ? 3 : 1) * m;
     score += pts;
+    if (m > lastMult) {
+      // новый уровень множителя
+      fx.banner?.(point.clone().add(BANNER_OFFSET), `КОМБО x${m}!`, '#ffd23f');
+      sfx.combo?.(m);
+    }
+    lastMult = m;
     fx.burst(point, u.color, u.type === 'gold' ? 26 : 16);
+    fx.shockwave?.(point, u.color);
     fx.popup(point, '+' + pts, u.type === 'gold' ? '#ffd23f' : '#ffffff');
     if (u.type === 'gold') sfx.gold(); else sfx.hit(multiplier());
     vibrate(controller, 0.7, 80);
@@ -211,9 +267,11 @@ const raycaster = new THREE.Raycaster();
 const tmpMat = new THREE.Matrix4();
 const farPoint = new THREE.Vector3();
 const CENTER = new THREE.Vector2(0, 0);
+const BANNER_OFFSET = new THREE.Vector3(0, 0.6, 0);
 
 function shootables() {
   if (state === 'play') return targets.children;
+  if (state === 'countdown') return [];
   return menu.mesh.visible ? [menu.mesh] : [];
 }
 
@@ -221,7 +279,9 @@ function shootables() {
 function fire(from, controller) {
   const hit = raycaster.intersectObjects(shootables(), false)[0];
   const end = hit ? hit.point : raycaster.ray.at(15, farPoint);
-  fx.tracer(from, end, controller ? controller.userData.color : 0xffffff);
+  const color = controller ? controller.userData.color : 0xffffff;
+  fx.tracer(from, end, color);
+  fx.muzzle?.(from, color);
   sfx.shot();
   vibrate(controller, 0.3, 40);
 
@@ -231,7 +291,7 @@ function fire(from, controller) {
   }
   shots++;
   if (hit) hitTarget(hit.object, hit.point.clone(), controller);
-  else { combo = 0; sfx.miss(); }
+  else { combo = 0; lastMult = 1; sfx.miss(); }
 }
 
 function vibrate(controller, intensity, ms) {
@@ -302,6 +362,15 @@ addEventListener('keydown', (e) => {
     e.preventDefault();
     fireFromScreen(CENTER);
   }
+  if (e.code === 'Enter' && !e.repeat && (state === 'menu' || state === 'over')) startGame();
+});
+
+// кнопка «Играть» на стартовом экране (клик пользователя — можно захватить мышь)
+addEventListener('game:start', () => {
+  if (!renderer.xr.isPresenting) {
+    try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+  }
+  if (state === 'menu' || state === 'over') startGame();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -441,8 +510,10 @@ function follow(obj, dist, height, speed, dt) {
 }
 
 // после выхода из VR возвращаем камеру в «рост»
+renderer.xr.addEventListener('sessionstart', () => emit('game:xr', { active: true }));
 renderer.xr.addEventListener('sessionend', () => {
   camera.position.set(0, EYE_HEIGHT, 0);
+  emit('game:xr', { active: false });
 });
 
 // ---------- МК ----------
@@ -471,14 +542,23 @@ renderer.setAnimationLoop(() => {
   updateMovement(dt);
   updateHead();
 
+  if (state === 'countdown') updateCountdown(dt);
+
   if (state === 'play') {
     timeLeft -= dt;
     elapsed += dt;
     spawnTimer -= dt;
+    if (goHide > 0 && (goHide -= dt) <= 0) menu.mesh.visible = false;
     if (spawnTimer <= 0 && targets.children.length < MAX_TARGETS) {
       spawnTarget();
       spawnTimer = Math.max(0.35, 1.0 - elapsed * 0.011); // темп растёт
     }
+    // тиканье в последние 10 секунд
+    const sec = Math.ceil(timeLeft);
+    if (sec <= 10 && sec > 0 && sec !== lastTickSec) { lastTickSec = sec; sfx.tick?.(); }
+    // музыка нарастает к концу раунда
+    const intensity = Math.round((0.35 + 0.65 * Math.min(1, elapsed / ROUND_TIME)) * 20) / 20;
+    if (intensity !== lastIntensity) { lastIntensity = intensity; music.setIntensity(intensity); }
     if (timeLeft <= 0) { timeLeft = 0; endGame(); }
   }
 
@@ -489,10 +569,13 @@ renderer.setAnimationLoop(() => {
 
   follow(board.mesh, 7, headPos.y + 2.6, 1.5, dt);
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
-  board.update({ score, timeLeft, multiplier: multiplier() });
+  board.update({ score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
 
   renderer.render(scene, camera);
+  if (!ready) { ready = true; emit('game:ready'); }
 });
+let ready = false;
+emit('game:state', { state });
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

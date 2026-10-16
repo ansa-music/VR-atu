@@ -3,40 +3,231 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070b1a">
+  <meta name="color-scheme" content="dark">
   <title>VR Тир</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap">
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #070b1a; font-family: system-ui, sans-serif; }
-    canvas { display: block; cursor: crosshair; }
-    #info {
-      position: absolute; top: 12px; left: 12px; max-width: 360px;
-      padding: 10px 14px; border-radius: 10px;
-      color: #fff; background: rgba(0, 0, 0, .5); font-size: 13px; line-height: 1.45;
+    :root {
+      --bg: #070b1a;
+      --cyan: #3ec5ff;
+      --violet: #7c5cff;
+      --pink: #ff3aa8;
+      --gold: #ffd23f;
+      --green: #34e89e;
+      --text: #e8edff;
+      --muted: #a9b6e6;
+      --panel: rgba(14, 20, 48, .58);
+      --panel-line: rgba(124, 92, 255, .38);
+      --head: "Russo One", "Arial Black", Impact, system-ui, sans-serif;
+      --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
-    #info b { font-size: 15px; }
-    #info .row { margin-top: 6px; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--body); }
+    canvas { display: block; cursor: crosshair; }
+    body.locked canvas { cursor: none; }
+    button { font-family: inherit; }
+    button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+
+    /* ---------- МК: компактная «пилюля» справа сверху ---------- */
     #mk {
-      position: absolute; top: 12px; right: 12px;
-      display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+      position: fixed; top: 12px; right: 12px; z-index: 30;
+      display: flex; align-items: center; gap: 10px;
+      max-width: calc(100vw - 72px);
+      padding: 5px 14px 5px 5px; border-radius: 999px;
+      background: rgba(10, 15, 38, .62);
+      border: 1px solid rgba(62, 197, 255, .35);
+      box-shadow: 0 0 18px rgba(62, 197, 255, .18), 0 6px 20px rgba(0, 0, 0, .35);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
     }
     #mk-connect {
-      padding: 10px 16px; border: 0; border-radius: 10px; cursor: pointer;
-      background: #34e89e; color: #06261a; font: bold 15px system-ui, sans-serif;
+      flex: none; white-space: nowrap;
+      padding: 8px 16px; border: 0; border-radius: 999px; cursor: pointer;
+      background: linear-gradient(135deg, var(--green), #1fbf86);
+      color: #04231a; font: 700 13px/1 var(--body); letter-spacing: .02em;
+      box-shadow: 0 0 14px rgba(52, 232, 158, .45);
+      transition: filter .15s, transform .15s, box-shadow .15s;
     }
-    #mk-connect:hover { filter: brightness(1.1); }
+    #mk-connect:hover { filter: brightness(1.12); box-shadow: 0 0 20px rgba(52, 232, 158, .65); }
+    #mk-connect:active { transform: scale(.97); }
     #mk-status {
-      max-width: 260px; padding: 6px 10px; border-radius: 8px; text-align: right;
-      color: #c9d6ff; background: rgba(0, 0, 0, .5); font-size: 12px;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--muted); font-size: 12.5px; text-align: left;
     }
+
+    /* ---------- «?» слева сверху ---------- */
+    #help-btn {
+      position: fixed; top: 12px; left: 12px; z-index: 30;
+      width: 42px; height: 42px; padding: 0; border-radius: 50%; cursor: pointer;
+      display: grid; place-items: center;
+      font: 400 20px/1 var(--head); color: var(--cyan);
+      background: rgba(10, 15, 38, .62);
+      border: 1px solid rgba(62, 197, 255, .45);
+      text-shadow: 0 0 10px rgba(62, 197, 255, .8);
+      box-shadow: 0 0 18px rgba(62, 197, 255, .22), 0 6px 20px rgba(0, 0, 0, .35);
+      -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      transition: transform .15s, box-shadow .15s, color .15s;
+    }
+    #help-btn:hover { transform: scale(1.08); color: #fff; box-shadow: 0 0 26px rgba(62, 197, 255, .55), 0 6px 20px rgba(0, 0, 0, .35); }
+    body.ov-open #help-btn { display: none; }
+
+    /* ---------- Прицел ---------- */
     #crosshair {
-      position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
-      transform: translate(-50%, -50%); pointer-events: none; opacity: .85;
+      position: fixed; left: 50%; top: 50%; z-index: 5; width: 34px; height: 34px;
+      transform: translate(-50%, -50%); pointer-events: none; opacity: .92;
+      background: radial-gradient(circle at center, var(--pink) 0 2px, transparent 2.6px);
+      filter: drop-shadow(0 0 3px rgba(62, 197, 255, .95)) drop-shadow(0 0 1px rgba(0, 0, 0, .9));
     }
-    #crosshair::before, #crosshair::after {
-      content: ""; position: absolute; background: #fff; box-shadow: 0 0 3px #000;
+    #crosshair::before, #crosshair::after { content: ""; position: absolute; }
+    #crosshair::before {
+      left: 16px; top: 0; width: 2px; height: 34px;
+      background: linear-gradient(to bottom, var(--cyan) 0 10px, transparent 10px 24px, var(--cyan) 24px);
     }
-    #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
-    #crosshair::after { top: 10px; left: 0; height: 2px; width: 22px; }
-    body.locked canvas { cursor: none; }
+    #crosshair::after {
+      top: 16px; left: 0; height: 2px; width: 34px;
+      background: linear-gradient(to right, var(--cyan) 0 10px, transparent 10px 24px, var(--cyan) 24px);
+    }
+    body.ov-open #crosshair { display: none; }
+
+    /* ---------- Стартовый экран ---------- */
+    #overlay {
+      position: fixed; inset: 0; z-index: 20;
+      display: flex; overflow-y: auto; overflow-x: hidden;
+      background:
+        radial-gradient(1100px 560px at 50% -10%, rgba(124, 92, 255, .38), transparent 62%),
+        radial-gradient(800px 480px at 90% 110%, rgba(255, 58, 168, .24), transparent 62%),
+        radial-gradient(800px 480px at 8% 110%, rgba(62, 197, 255, .2), transparent 62%),
+        rgba(7, 11, 26, .84);
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      opacity: 1; visibility: visible;
+      transition: opacity .35s ease, visibility 0s linear 0s;
+    }
+    #overlay.is-hidden {
+      opacity: 0; visibility: hidden; pointer-events: none;
+      transition: opacity .3s ease, visibility 0s linear .3s;
+    }
+    #overlay::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(62, 197, 255, .09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(62, 197, 255, .09) 1px, transparent 1px);
+      background-size: 48px 48px;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 15%, #000 100%);
+      mask-image: linear-gradient(to bottom, transparent 15%, #000 100%);
+    }
+    .ov-inner {
+      position: relative; margin: auto; width: 100%; max-width: 1060px;
+      padding: 64px 20px 32px; text-align: center;
+      animation: ov-in .6s cubic-bezier(.2, .8, .2, 1) both;
+    }
+    @keyframes ov-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+    .ov-title {
+      margin: 0; font: 400 clamp(54px, 11vw, 124px)/1 var(--head);
+      letter-spacing: .04em; text-transform: uppercase;
+    }
+    .ov-title .t-vr {
+      color: #eafaff;
+      text-shadow: 0 0 6px #fff, 0 0 18px var(--cyan), 0 0 42px var(--cyan), 0 0 90px rgba(62, 197, 255, .7);
+    }
+    .ov-title .t-tir {
+      color: #fff0f8;
+      text-shadow: 0 0 6px #fff, 0 0 18px var(--pink), 0 0 42px var(--pink), 0 0 90px rgba(255, 58, 168, .7);
+      animation: flicker 6s infinite;
+    }
+    @keyframes flicker {
+      0%, 92%, 96%, 100% { opacity: 1; }
+      93% { opacity: .78; } 94% { opacity: 1; } 95% { opacity: .85; }
+    }
+    .ov-tagline {
+      margin: 14px 0 0; color: var(--muted);
+      font-size: clamp(13px, 2.2vw, 17px); letter-spacing: .12em; text-transform: uppercase;
+    }
+
+    #play {
+      display: inline-block; margin: 30px 0 34px; padding: 18px 60px; border: 0; border-radius: 999px; cursor: pointer;
+      font: 400 clamp(20px, 3.4vw, 27px)/1 var(--head); letter-spacing: .08em; color: #fff;
+      background: linear-gradient(135deg, var(--cyan) 0%, var(--violet) 55%, var(--pink) 100%);
+      text-shadow: 0 1px 8px rgba(0, 0, 0, .4);
+      box-shadow:
+        0 0 26px rgba(62, 197, 255, .55), 0 0 64px rgba(124, 92, 255, .4),
+        inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -3px 0 rgba(0, 0, 0, .18);
+      transition: transform .18s, filter .18s;
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+    #play:hover:not(:disabled) { transform: translateY(-2px) scale(1.04); filter: brightness(1.12); }
+    #play:active:not(:disabled) { transform: scale(.98); }
+    #play:disabled { cursor: progress; opacity: .6; filter: saturate(.35); animation: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25); }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 22px rgba(62, 197, 255, .45), 0 0 54px rgba(124, 92, 255, .32), inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -3px 0 rgba(0, 0, 0, .18); }
+      50% { box-shadow: 0 0 34px rgba(62, 197, 255, .75), 0 0 84px rgba(255, 58, 168, .5), inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -3px 0 rgba(0, 0, 0, .18); }
+    }
+
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; text-align: left; }
+    .card {
+      --accent: var(--cyan); --glow: rgba(62, 197, 255, .18);
+      padding: 20px 22px 22px; border-radius: 18px;
+      background: var(--panel);
+      border: 1px solid var(--panel-line); border-top: 2px solid var(--accent);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, .4), 0 0 30px var(--glow);
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    }
+    .card.pc { --accent: var(--cyan); --glow: rgba(62, 197, 255, .18); }
+    .card.vr { --accent: var(--violet); --glow: rgba(124, 92, 255, .24); }
+    .card.mk { --accent: var(--green); --glow: rgba(52, 232, 158, .16); }
+    .card h2 {
+      display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+      font: 400 19px/1 var(--head); letter-spacing: .1em; color: var(--accent);
+      text-shadow: 0 0 12px var(--glow), 0 0 4px var(--glow);
+    }
+    .card h2 svg { width: 28px; height: 28px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 5px var(--accent)); }
+    .card dl { display: grid; grid-template-columns: max-content 1fr; gap: 9px 14px; align-items: center; margin: 0; }
+    .card dt { display: flex; gap: 4px; flex-wrap: wrap; margin: 0; }
+    .card dd { margin: 0; color: var(--text); font-size: 14.5px; line-height: 1.35; }
+    kbd {
+      display: inline-block; padding: 3px 9px; border-radius: 7px;
+      font: 600 12.5px/1.25 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--accent);
+      background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .18);
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35);
+    }
+    .card .note {
+      margin: 14px 0 0; padding-top: 12px; border-top: 1px dashed rgba(255, 255, 255, .14);
+      color: var(--muted); font-size: 13px; line-height: 1.4;
+    }
+    .card .note b { color: var(--accent); font-weight: 700; }
+
+    .rules {
+      display: inline-block; max-width: 100%; margin: 22px 0 0; padding: 12px 22px; border-radius: 16px;
+      color: var(--muted); font-size: 14.5px; line-height: 1.55;
+      background: rgba(14, 20, 48, .5); border: 1px solid rgba(255, 210, 63, .28);
+      box-shadow: 0 0 22px rgba(255, 210, 63, .08);
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    }
+    .rules b { font-weight: 700; white-space: nowrap; }
+    .rules .r-c { color: var(--cyan); } .rules .r-g { color: var(--gold); } .rules .r-p { color: var(--pink); } .rules .r-m { color: var(--green); } .rules .r-t { color: var(--text); }
+    .ov-foot { margin: 16px 0 0; color: rgba(169, 182, 230, .6); font-size: 12.5px; }
+
+    @media (max-width: 900px) {
+      .cards { grid-template-columns: 1fr; max-width: 560px; margin: 0 auto; }
+      .ov-inner { padding-top: 70px; }
+    }
+    @media (max-width: 520px) {
+      .ov-inner { padding: 70px 14px 26px; }
+      #play { padding: 16px 40px; }
+      .card { padding: 16px 16px 18px; }
+      .rules { padding: 10px 14px; font-size: 13.5px; }
+      #mk-connect { padding: 8px 12px; }
+    }
+    @media (max-height: 720px) and (min-width: 901px) {
+      .ov-inner { padding-top: 52px; }
+      #play { margin: 20px 0 22px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ov-inner, #play, .ov-title .t-tir { animation: none; }
+      #overlay, #overlay.is-hidden { transition: none; }
+    }
   </style>
   <script type="importmap">
     {
@@ -47,20 +238,72 @@
     }
   </script>
 </head>
-<body>
-  <div id="info">
-    <b>VR Тир</b><br>
-    Сбивай кристаллы 60 секунд: обычный +1, золотой +3, бомба −5.
-    <div class="row"><b>ПК:</b> WASD — ходьба, мышь — обзор (клик захватывает мышь, Esc — отпустить), Q/E или ←/→ — поворот, клик или Пробел — выстрел.</div>
-    <div class="row"><b>VR:</b> левый стик — ходьба, правый — поворот, курок — выстрел.</div>
-    <div class="row"><b>МК (Arduino):</b> джойстик — ходьба, кнопка — выстрел. Подключи до входа в VR.</div>
-    <div class="row">Выстрели в панель «СТАРТ», чтобы начать.</div>
+<body class="ov-open">
+  <div id="overlay" role="dialog" aria-modal="true" aria-labelledby="ov-title">
+    <div class="ov-inner">
+      <h1 class="ov-title" id="ov-title"><span class="t-vr">VR</span> <span class="t-tir">ТИР</span></h1>
+      <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
+
+      <button id="play" type="button" disabled>Загрузка…</button>
+
+      <div class="cards">
+        <section class="card pc">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+            ПК
+          </h2>
+          <dl>
+            <dt><kbd>WASD</kbd></dt><dd>ходьба</dd>
+            <dt><kbd>Мышь</kbd></dt><dd>обзор</dd>
+            <dt><kbd>Q</kbd><kbd>E</kbd></dt><dd>поворот</dd>
+            <dt><kbd>Клик</kbd><kbd>Пробел</kbd></dt><dd>выстрел</dd>
+            <dt><kbd>Esc</kbd></dt><dd>отпустить мышь</dd>
+          </dl>
+        </section>
+
+        <section class="card vr">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3.4l-1.4-2.4h-4.4L8.4 17H5a2 2 0 0 1-2-2z"/><circle cx="8" cy="12" r="1.2"/><circle cx="16" cy="12" r="1.2"/></svg>
+            VR-шлем
+          </h2>
+          <dl>
+            <dt><kbd>Левый стик</kbd></dt><dd>ходьба</dd>
+            <dt><kbd>Правый стик</kbd></dt><dd>поворот</dd>
+            <dt><kbd>Курок</kbd></dt><dd>выстрел</dd>
+          </dl>
+          <p class="note">Кнопка <b>«ENTER VR»</b> внизу экрана.</p>
+        </section>
+
+        <section class="card mk">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg>
+            МК Arduino
+          </h2>
+          <dl>
+            <dt><kbd>Джойстик</kbd></dt><dd>ходьба</dd>
+            <dt><kbd>Кнопка</kbd></dt><dd>выстрел</dd>
+          </dl>
+          <p class="note">Подключи в <b>Chrome/Edge</b> до входа в VR.</p>
+        </section>
+      </div>
+
+      <p class="rules">
+        <b class="r-t">60 секунд</b> · <b class="r-c">кристалл +1</b> · <b class="r-g">золотой +3</b> · <b class="r-p">бомба −5</b> · <b class="r-m">серия из 5 попаданий = множитель до x4</b>
+      </p>
+      <p class="ov-foot">Кнопка «?» в левом верхнем углу вернёт эту справку.</p>
+    </div>
   </div>
+
+  <button id="help-btn" type="button" title="Справка" aria-label="Справка">?</button>
+
   <div id="mk">
     <button id="mk-connect" type="button">🔌 Подключить МК</button>
     <div id="mk-status">МК не подключён</div>
   </div>
+
   <div id="crosshair"></div>
+
+  <script type="module" src="js/overlay.js"></script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

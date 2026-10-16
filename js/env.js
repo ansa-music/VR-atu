@@ -70,7 +70,157 @@ export function buildEnvironment(scene) {
     rings.push({ mesh: ring, speed: c.speed });
   }
 
-  // Лёгкая анимация: пульс колонн и медленный поворот колец (без аллокаций)
+  // ---- Градиентный купол неба (радиус 150 < far 200, без тумана) ----
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    fog: false,
+    depthWrite: false,
+    uniforms: {
+      uZenith: { value: new THREE.Color(0x02040d) }, // зенит
+      uMid: { value: new THREE.Color(0x2a1060) },    // фиолетовый у горизонта
+      uGlow: { value: new THREE.Color(0xff3aa8) },   // розовая полоса на горизонте
+      uBelow: { value: new THREE.Color(0x070b1a) },  // ниже горизонта
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vPos;
+      void main() {
+        vPos = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uZenith;
+      uniform vec3 uMid;
+      uniform vec3 uGlow;
+      uniform vec3 uBelow;
+      varying vec3 vPos;
+      void main() {
+        float h = normalize(vPos).y;
+        vec3 col;
+        if (h >= 0.0) {
+          vec3 base = mix(uMid, uZenith, pow(clamp(h, 0.0, 1.0), 0.6));
+          float glow = pow(1.0 - clamp(h / 0.16, 0.0, 1.0), 2.0); // тонкая полоса у горизонта
+          col = mix(base, uGlow, glow);
+        } else {
+          col = mix(uGlow, uBelow, smoothstep(0.0, 0.1, -h));
+        }
+        gl_FragColor = vec4(col, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const skyDome = new THREE.Mesh(new THREE.SphereGeometry(150, 32, 16), skyMat);
+  skyDome.renderOrder = -100; // рисуется первым, глубину не пишет
+  skyDome.frustumCulled = false;
+  scene.add(skyDome);
+
+  // ---- Синтвейв-солнце далеко впереди (по -Z) ----
+  const sunMat = new THREE.ShaderMaterial({
+    fog: false,
+    transparent: true,
+    depthWrite: false,
+    uniforms: {
+      uTop: { value: new THREE.Color(0xffd23f) },    // жёлтый сверху
+      uBottom: { value: new THREE.Color(0xff3aa8) }, // маджента снизу
+    },
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 uTop;
+      uniform vec3 uBottom;
+      varying vec2 vUv;
+      void main() {
+        // в нижней половине вырезаем горизонтальные полосы, к низу они шире
+        if (vUv.y < 0.5) {
+          float s = (0.5 - vUv.y) / 0.5;
+          if (fract(vUv.y * 14.0) < s * 0.65) discard;
+        }
+        vec3 col = mix(uBottom, uTop, smoothstep(0.1, 0.9, vUv.y));
+        gl_FragColor = vec4(col, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 64), sunMat);
+  sunDisc.position.set(0, 14, -130);
+  sunDisc.lookAt(0, 14, 0); // нормаль (+Z) смотрит в сторону игрока
+  scene.add(sunDisc);
+
+  // ---- Каркасные low-poly горы кольцом (радиус 60–95), разрыв за солнцем ----
+  const mtnMats = [
+    new THREE.MeshBasicMaterial({ color: 0x3affd0, wireframe: true, transparent: true, opacity: 0.5, fog: false }),
+    new THREE.MeshBasicMaterial({ color: 0xff3aa8, wireframe: true, transparent: true, opacity: 0.5, fog: false }),
+  ];
+  // детерминированный «шум» по координатам вершины (швы конуса совпадают)
+  const hash = (x, y, z, seed) => {
+    const v = Math.sin(Math.round(x * 100) * 12.9898 + Math.round(y * 100) * 37.719 + Math.round(z * 100) * 78.233 + seed) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  const MTN_SLOTS = 14;
+  const SUN_ANGLE = Math.PI * 1.5; // направление на -Z
+  for (let i = 0; i < MTN_SLOTS; i++) {
+    const a = (i / MTN_SLOTS) * Math.PI * 2 + 0.2;
+    let d = Math.abs(a - SUN_ANGLE) % (Math.PI * 2);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    if (d < 0.2) continue; // не закрываем солнце
+    const rad = 60 + Math.random() * 35;
+    const height = 10 + Math.random() * 12;
+    const baseR = 10 + Math.random() * 8;
+    const geo = new THREE.ConeGeometry(baseR, height, 5 + (i % 2), 3, true);
+    const p = geo.attributes.position;
+    for (let k = 0; k < p.count; k++) {
+      const x = p.getX(k), y = p.getY(k), z = p.getZ(k);
+      const onBase = y < -height / 2 + 0.01;
+      const onApex = y > height / 2 - 0.01;
+      const n1 = hash(x, y, z, i * 3.1), n2 = hash(x, y, z, i * 7.7 + 1.3);
+      if (!onBase) p.setY(k, y + (n1 - 0.5) * height * 0.22); // рваные высоты
+      if (!onBase) { // небольшой разброс по горизонтали для асимметрии
+        p.setX(k, x + (n2 - 0.5) * baseR * 0.3);
+        p.setZ(k, z + (n1 - 0.5) * baseR * 0.3);
+      }
+      if (onApex) p.setY(k, p.getY(k) + height * 0.08 * n2);
+    }
+    p.needsUpdate = true;
+    const mtn = new THREE.Mesh(geo, mtnMats[i % 2]);
+    mtn.position.set(Math.cos(a) * rad, height / 2, Math.sin(a) * rad);
+    mtn.rotation.y = Math.random() * Math.PI * 2;
+    mtn.frustumCulled = false;
+    scene.add(mtn);
+  }
+
+  // ---- Светящаяся граница арены на полу (радиус 11) ----
+  const arenaMat = new THREE.MeshBasicMaterial({
+    color: 0x3ec5ff, transparent: true, opacity: 0.8, depthWrite: false,
+  });
+  const arenaRing = new THREE.Mesh(new THREE.RingGeometry(10.9, 11.05, 128), arenaMat);
+  arenaRing.rotation.x = -Math.PI / 2;
+  arenaRing.position.y = 0.01;
+  scene.add(arenaRing);
+
+  // ---- Пылинки в воздухе: ~300 точек в радиусе 12, y 0.2–5 ----
+  const DUST = 300, DUST_MIN_Y = 0.2, DUST_MAX_Y = 5;
+  const dustPos = new Float32Array(DUST * 3);
+  const dustSpeed = new Float32Array(DUST);
+  for (let i = 0; i < DUST; i++) {
+    const r = 12 * Math.sqrt(Math.random());
+    const a = Math.random() * Math.PI * 2;
+    dustPos[i * 3] = Math.cos(a) * r;
+    dustPos[i * 3 + 1] = DUST_MIN_Y + Math.random() * (DUST_MAX_Y - DUST_MIN_Y);
+    dustPos[i * 3 + 2] = Math.sin(a) * r;
+    dustSpeed[i] = 0.05 + Math.random() * 0.12; // м/с вверх
+  }
+  const dustGeo = new THREE.BufferGeometry();
+  const dustAttr = new THREE.BufferAttribute(dustPos, 3);
+  dustAttr.setUsage(THREE.DynamicDrawUsage);
+  dustGeo.setAttribute('position', dustAttr);
+  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+    color: 0x9fe7ff, size: 0.04, transparent: true, opacity: 0.6, depthWrite: false,
+  }));
+  dust.frustumCulled = false;
+  scene.add(dust);
+
+  // Лёгкая анимация: пульс колонн, поворот колец, пульс границы, дрейф пыли (без аллокаций)
   function update(dt, time) {
     for (let i = 0; i < PILLARS; i++) {
       pillarMats[i].color.setHSL(i / PILLARS, 0.8, 0.55 + 0.12 * Math.sin(time * 2 + i));
@@ -78,6 +228,15 @@ export function buildEnvironment(scene) {
     for (let i = 0; i < rings.length; i++) {
       rings[i].mesh.rotation.y += rings[i].speed * dt;
     }
+    arenaMat.opacity = 0.65 + 0.25 * Math.sin(time * 2.0);
+    for (let i = 0; i < DUST; i++) {
+      const j = i * 3;
+      dustPos[j] += Math.sin(time * 0.5 + i) * 0.02 * dt; // лёгкое покачивание
+      let y = dustPos[j + 1] + dustSpeed[i] * dt;
+      if (y > DUST_MAX_Y) y = DUST_MIN_Y; // возврат вниз
+      dustPos[j + 1] = y;
+    }
+    dustAttr.needsUpdate = true;
   }
 
   return { update };
