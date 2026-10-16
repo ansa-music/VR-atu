@@ -5,7 +5,7 @@ import * as audio from './sfx.js';
 import { createFx } from './fx.js';
 import { createScoreboard, createMenu } from './ui.js';
 import { mk } from './mk.js';
-import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-pvp-v3';
+import { initializeMultiplayerPresence } from './multiplayer-presence.js?v=atu-anim-v1';
 import { createSharedArena } from './multiplayer-arena.js?v=atu-pvp-v3';
 import { createPvpMap } from './pvp-map.js';
 import { slideMovement } from './pvp-layout.js?v=atu-pvp-v3';
