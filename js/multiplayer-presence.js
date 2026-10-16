@@ -6,6 +6,7 @@ import { createRemoteAvatar, skinId } from './skins.js';
 export function initializeMultiplayerPresence(scene, camera) {
   const participants = new Map();
   const remoteSkins = new Map();
+  const remoteTeams = new Map();
   let client = null;
   let lastPublish = 0;
 
@@ -13,15 +14,33 @@ export function initializeMultiplayerPresence(scene, camera) {
     for (const avatar of participants.values()) scene.remove(avatar.group);
     participants.clear();
     remoteSkins.clear();
+    remoteTeams.clear();
   }
 
   function ensure(id) {
     if (participants.has(id)) return participants.get(id);
-    const { group } = createRemoteAvatar(remoteSkins.get(id) || 'cyan');
+    const group = makeTeamAvatar(id);
     scene.add(group);
     const item = { group, target: new THREE.Vector3(), quaternion: new THREE.Quaternion(), lastSeen: performance.now() };
     participants.set(id, item);
     return item;
+  }
+
+  function makeTeamAvatar(id) {
+    const { group } = createRemoteAvatar(remoteSkins.get(id) || 'cyan');
+    group.scale.setScalar(0.80); // feet near floor for a 1.6m tracked head.
+    const team = remoteTeams.get(id) || 'alpha';
+    const color = team === 'alpha' ? 0x3ec5ff : 0xff9b54;
+    const glow = new THREE.MeshBasicMaterial({color});
+    for (const x of [-0.16,0.16]) {
+      const patch = new THREE.Mesh(new THREE.BoxGeometry(.12,.055,.018),glow);
+      patch.position.set(x,-.44,-.195);
+      group.add(patch);
+    }
+    const badge = new THREE.Mesh(new THREE.BoxGeometry(.14,.018,.018),glow);
+    badge.position.set(0,-.52,-.201);
+    group.add(badge);
+    return group;
   }
 
   function roomUpdate() {
@@ -29,11 +48,13 @@ export function initializeMultiplayerPresence(scene, camera) {
     const ids = new Set(players.map(p => p.id));
     for (const p of players) {
       const nextSkin = skinId(p.skin);
-      if (remoteSkins.get(p.id) !== nextSkin) {
+      const nextTeam = p.team || 'alpha';
+      if (remoteSkins.get(p.id) !== nextSkin || remoteTeams.get(p.id) !== nextTeam) {
         remoteSkins.set(p.id, nextSkin);
+        remoteTeams.set(p.id, nextTeam);
         const existing = participants.get(p.id);
         if (existing) {
-          const { group: replacement } = createRemoteAvatar(nextSkin);
+          const replacement = makeTeamAvatar(p.id);
           replacement.position.copy(existing.group.position);
           replacement.quaternion.copy(existing.group.quaternion);
           scene.remove(existing.group);
@@ -43,7 +64,7 @@ export function initializeMultiplayerPresence(scene, camera) {
       }
     }
     for (const [id, avatar] of participants) {
-      if (!ids.has(id)) { scene.remove(avatar.group); participants.delete(id); remoteSkins.delete(id); }
+      if (!ids.has(id)) { scene.remove(avatar.group); participants.delete(id); remoteSkins.delete(id); remoteTeams.delete(id); }
     }
   }
 
@@ -67,8 +88,10 @@ export function initializeMultiplayerPresence(scene, camera) {
       if (client !== connection) return;
       const p = e.detail;
       if (p.id === client.playerId) return;
+      const fresh = !participants.has(p.id);
       const avatar = ensure(p.id);
       avatar.target.fromArray(p.position);
+      if (fresh) avatar.group.position.copy(avatar.target);
       avatar.quaternion.fromArray(p.rotation);
       avatar.lastSeen = performance.now();
     });
