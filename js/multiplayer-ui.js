@@ -1,108 +1,190 @@
 import { MULTIPLAYER_SERVER_URL } from './server-config.js';
-// Optional multiplayer lobby UI. The existing single-player button stays unchanged.
+
+// Совместимо со старой разметкой, оставшейся в кеше браузера.
 const $ = id => document.getElementById(id);
+const serverUrl = MULTIPLAYER_SERVER_URL.trim();
+let room = null, myId = null, mode = 'create', connecting = false;
+
 const status = $('mp-status');
 const panel = $('mp-panel');
-const list = $('mp-players');
-const codeView = $('mp-code');
+const lobby = $('mp-lobby');
+const code = $('mp-code');
+const players = $('mp-players');
 const start = $('mp-start');
-const inputName = $('mp-name');
-const inputCode = $('mp-join-code');
-const inputServer = $('mp-server');
-const serverUrl = MULTIPLAYER_SERVER_URL.trim();
-let myId = null;
-let room = null;
-let mode = 'create';
+const serverField = $('mp-server');
+const nameField = $('mp-name');
+const joinCodeField = $('mp-join-code');
+const createButton = $('mp-create');
+const joinButton = $('mp-join');
 const createFields = $('mp-create-fields');
 const joinFields = $('mp-join-fields');
 const createTab = $('mp-mode-create');
 const joinTab = $('mp-mode-join');
-const lobby = $('mp-lobby');
-function setMode(next) {
-  mode = next;
-  createFields.hidden = next !== 'create';
-  joinFields.hidden = next !== 'join';
-  createTab.setAttribute('aria-pressed', String(next === 'create'));
-  joinTab.setAttribute('aria-pressed', String(next === 'join'));
-}
-createTab?.addEventListener('click', () => setMode('create'));
-joinTab?.addEventListener('click', () => setMode('join'));
-setMode('create');
+const errorLabels = {
+  CODE_TAKEN: 'Код уже занят. Укажите другой или оставьте поле пустым.',
+  ROOM_NOT_FOUND: 'Комната не найдена. Проверьте код.',
+  ROOM_FULL: 'Комната заполнена.',
+  ROUND_IN_PROGRESS: 'Раунд уже идёт. Подождите следующего.',
+  HOST_ONLY: 'Начать раунд может только создатель комнаты.',
+  INVALID_CODE: 'Введите ровно три цифры: например, 123.',
+  ALREADY_IN_ROOM: 'Вы уже находитесь в комнате.',
+  NOT_IN_ROOM: 'Сначала подключитесь к комнате.',
+  CONNECTION_FAILED: 'Не удалось подключиться к серверу. Повторите попытку.',
+  NETWORK_ERROR: 'Ошибка сети. Проверьте интернет.',
+};
 
-function showStatus(value) { if (status) status.textContent = value; }
+function showStatus(message) {
+  if (status) status.textContent = message;
+}
+function showMode(next) {
+  mode = next;
+  // Новая разметка: две вкладки. Старая: две кнопки без вкладок.
+  if (createFields && joinFields) {
+    createFields.hidden = next !== 'create';
+    joinFields.hidden = next !== 'join';
+  }
+  createTab?.setAttribute('aria-pressed', String(next === 'create'));
+  joinTab?.setAttribute('aria-pressed', String(next === 'join'));
+}
 function render() {
   if (!room) {
-    panel.hidden = false;
-    lobby.hidden = true;
-    list.textContent = '';
-    if ($('mp-ranking')) $('mp-ranking').textContent = '';
-    codeView.textContent = '—';
-    start.hidden = true;
+    if (panel) panel.hidden = false;
+    if (lobby) lobby.hidden = true;
+    if (players) players.replaceChildren();
+    if (code) code.textContent = '—';
+    if (start) start.hidden = true;
+    $('mp-ranking')?.replaceChildren();
     return;
   }
-  codeView.textContent = room.code;
-  $('mp-room-title').textContent = room.title || 'Комната ATU';
-  $('mp-room-info').textContent = (room.players?.length || 0) + ' / ' + room.maxPlayers + ' игроков · ' + room.durationSec + ' секунд';
-  lobby.hidden = false;
-  panel.hidden = true;
-  list.replaceChildren(...room.players.map(p => {
-    const line = document.createElement('div');
-    line.textContent = (p.id === room.hostId ? '★ ' : '') + p.name + (p.id === myId ? ' (вы)' : '');
-    return line;
-  }));
-  start.hidden = myId !== room.hostId;
-  start.disabled = room.phase === 'playing';
-  showStatus(room.phase === 'playing' ? 'Раунд идёт' : room.phase === 'finished' ? 'Раунд завершён' : 'Комната создана. Пригласите друзей по коду.');
+  if (panel) panel.hidden = true;
+  if (lobby) lobby.hidden = false;
+  if (code) code.textContent = room.code;
+  const title = $('mp-room-title');
+  if (title) title.textContent = room.title || 'Комната ATU';
+  const info = $('mp-room-info');
+  if (info) info.textContent = (room.players?.length || 0) + '/' + (room.maxPlayers || 8) +
+    ' игроков · ' + (room.durationSec || 60) + ' секунд';
+  if (players) {
+    players.replaceChildren(...(room.players || []).map(p => {
+      const row = document.createElement('div');
+      row.textContent = (p.id === room.hostId ? '★ ' : '') + p.name + (p.id === myId ? ' (вы)' : '');
+      return row;
+    }));
+  }
+  if (start) {
+    start.hidden = myId !== room.hostId;
+    start.disabled = room.phase === 'playing';
+  }
+  showStatus(room.phase === 'playing' ? 'Раунд идёт.' :
+    room.phase === 'finished' ? 'Раунд завершён. Можно начать снова.' :
+      'Комната готова. Пригласите друзей по коду.');
+}
+function setBusy(busy) {
+  connecting = busy;
+  if (createButton) createButton.disabled = busy;
+  if (joinButton) joinButton.disabled = busy;
 }
 function submit(action) {
-  const url = serverUrl || inputServer.value.trim();
-  if (!/^wss?:\/\//i.test(url)) { showStatus('Сервер ещё не опубликован. Для тестов откройте дополнительные настройки и укажите URL.'); return; }
+  if (connecting) return;
+  const url = serverUrl || serverField?.value.trim() || '';
+  if (!/^wss?:\/\//i.test(url)) {
+    showStatus('Адрес сервера не настроен.');
+    return;
+  }
   if (location.protocol === 'https:' && !url.startsWith('wss://')) {
-    showStatus('На HTTPS-сайте нужен защищённый сервер wss://');
+    showStatus('Для защищённой страницы требуется сервер wss://');
     return;
   }
-  if (action === 'join' && !/^\d{3}$/.test(inputCode.value.trim())) {
-    showStatus('Введите трёхзначный цифровой код');
+  const joinCode = joinCodeField?.value.trim() || '';
+  const ownCode = $('mp-custom-code')?.value.trim() || '';
+  if (action === 'join' && !/^\d{3}$/.test(joinCode)) {
+    showStatus('Укажите код из трёх цифр, например 123.');
+    joinCodeField?.focus();
     return;
   }
-  showStatus('Подключение…');
-  window.dispatchEvent(new CustomEvent('mp:configure', { detail: {
-    action, url, code: inputCode.value.trim(), name: inputName.value.trim(),
+  if (action === 'create' && ownCode && !/^\d{3}$/.test(ownCode)) {
+    showStatus('Свой код должен состоять из трёх цифр.');
+    $('mp-custom-code')?.focus();
+    return;
+  }
+  setBusy(true);
+  showStatus('Подключаемся к серверу…');
+  window.dispatchEvent(new CustomEvent('mp:configure', {detail: {
+    action, url, code: joinCode, name: nameField?.value.trim() || '',
     options: action === 'create' ? {
-      code: $('mp-custom-code').value.trim(),
-      title: $('mp-title').value.trim() || 'Комната ATU',
-      maxPlayers: Number($('mp-max-players').value),
-      durationSec: Number($('mp-duration').value),
+      code: ownCode,
+      title: $('mp-title')?.value.trim() || 'Комната ATU',
+      maxPlayers: Number($('mp-max-players')?.value || 8),
+      durationSec: Number($('mp-duration')?.value || 60),
     } : {},
-  } }));
+  }}));
+  // Не оставлять кнопки навсегда заблокированными при ошибках сети.
+  window.setTimeout(() => {
+    if (connecting && !room) {
+      setBusy(false);
+      showStatus('Ответ сервера задерживается. Попробуйте ещё раз.');
+    }
+  }, 18000);
 }
-$('mp-create')?.addEventListener('click', () => submit('create'));
-$('mp-join')?.addEventListener('click', () => submit('join'));
-$('mp-copy-code')?.addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(room?.code || ''); showStatus('Код скопирован'); }
-  catch { showStatus('Код комнаты: ' + (room?.code || '—')); }
-});
+
+createTab?.addEventListener('click', () => showMode('create'));
+joinTab?.addEventListener('click', () => showMode('join'));
+createButton?.addEventListener('click', () => submit('create'));
+joinButton?.addEventListener('click', () => submit('join'));
 start?.addEventListener('click', () => window.dispatchEvent(new Event('mp:start-round')));
 $('mp-leave')?.addEventListener('click', () => window.dispatchEvent(new Event('mp:leave')));
-window.addEventListener('mp:room:joined', e => { myId = e.detail.playerId; room = e.detail.room; render(); });
-window.addEventListener('mp:room:update', e => { room = e.detail.room; render(); });
-window.addEventListener('mp:room:left', () => { room = null; myId = null; render(); showStatus('Вы вышли из комнаты'); });
-window.addEventListener('mp:status', e => { if (e.detail.state === 'disconnected') { room = null; render(); showStatus('Соединение прервано'); } });
+$('mp-copy-code')?.addEventListener('click', async () => {
+  if (!room) return;
+  try {
+    await navigator.clipboard.writeText(room.code);
+    showStatus('Код скопирован: ' + room.code);
+  } catch {
+    showStatus('Ваш код: ' + room.code);
+  }
+});
+
+window.addEventListener('mp:room:joined', e => {
+  setBusy(false);
+  myId = e.detail.playerId;
+  room = e.detail.room;
+  render();
+});
+window.addEventListener('mp:room:update', e => {
+  room = e.detail.room;
+  render();
+});
+window.addEventListener('mp:room:left', () => {
+  setBusy(false); room = null; myId = null; render(); showStatus('Вы вышли из комнаты.');
+});
+window.addEventListener('mp:status', e => {
+  if (e.detail.state === 'disconnected') {
+    setBusy(false);
+    room = null; myId = null; render();
+    showStatus('Связь с сервером прервана.');
+  }
+});
 window.addEventListener('mp:scoreboard', e => {
   const box = $('mp-ranking');
   if (!box) return;
-  const { players, phase, remaining } = e.detail;
-  const title = document.createElement('strong');
-  title.textContent = phase === 'playing' ? 'Сетевой раунд · ' + remaining + ' сек.' : 'Результаты';
-  const ranking = players.map((p, i) => {
-    const item = document.createElement('div');
-    item.textContent = (i + 1) + '. ' + p.name + ' — ' + p.score + ' очков (' + p.hits + '/' + p.shots + ')';
-    return item;
+  const {players: standings = [], phase, remaining} = e.detail;
+  const headline = document.createElement('strong');
+  headline.textContent = phase === 'playing' ? 'До конца раунда: ' + remaining + ' с' : 'Таблица результатов';
+  const rows = standings.map((p, i) => {
+    const row = document.createElement('div');
+    row.textContent = (i + 1) + '. ' + p.name + ' — ' + p.score + ' очков';
+    return row;
   });
-  box.replaceChildren(title, ...ranking);
+  box.replaceChildren(headline, ...rows);
 });
-const errorLabels = { CODE_TAKEN:'Этот код уже занят. Выберите другой.', ROOM_NOT_FOUND:'Комната не найдена. Проверьте код.', ROOM_FULL:'Комната заполнена.', ROUND_IN_PROGRESS:'Раунд уже идёт.', HOST_ONLY:'Настройки доступны только хозяину.', INVALID_CODE:'Код должен состоять из трёх цифр.', CONNECTION_FAILED:'Не удалось подключиться к серверу.', NETWORK_ERROR:'Ошибка подключения к серверу.' };
-window.addEventListener('mp:error', e => { showStatus(errorLabels[e.detail.code] || 'Ошибка: ' + (e.detail.code || 'неизвестная')); });
-render();
+window.addEventListener('mp:error', e => {
+  setBusy(false);
+  showStatus(errorLabels[e.detail?.code] || 'Ошибка подключения: ' + (e.detail?.code || 'неизвестная'));
+});
 
-if (serverUrl && inputServer) { inputServer.value = serverUrl; inputServer.disabled = true; showStatus('Сервер настроен — создайте комнату или войдите по коду.'); }
+showMode('create');
+render();
+if (serverUrl && serverField) {
+  serverField.value = serverUrl;
+  serverField.disabled = true;
+  showStatus('Готово. Можно создавать комнату или подключаться по коду.');
+}
