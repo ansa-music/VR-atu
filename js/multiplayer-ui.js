@@ -17,6 +17,20 @@ const players = $('mp-players');
 const start = $('mp-start');
 const serverField = $('mp-server');
 const nameField = $('mp-name');
+const SAVED_NAME_KEY = 'atu-last-player-name';
+function savePlayerName() {
+  const value = (nameField?.value || '').trim().slice(0, 20);
+  if (!value) return;
+  try { localStorage.setItem(SAVED_NAME_KEY, value); } catch { /* storage unavailable */ }
+}
+if (nameField) {
+  try {
+    const saved = localStorage.getItem(SAVED_NAME_KEY);
+    if (saved && !nameField.value.trim()) nameField.value = saved.slice(0, 20);
+  } catch { /* private browsing / storage disabled */ }
+  nameField.addEventListener('change', savePlayerName);
+  nameField.addEventListener('blur', savePlayerName);
+}
 const joinCodeField = $('mp-join-code');
 const createButton = $('mp-create');
 const joinButton = $('mp-join');
@@ -129,6 +143,7 @@ function submit(action) {
     $('mp-custom-code')?.focus();
     return;
   }
+  savePlayerName();
   setBusy(true);
   const currentAttempt = ++attemptId;
   showStatus('Подключаемся к серверу…');
