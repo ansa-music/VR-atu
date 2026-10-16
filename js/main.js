@@ -58,6 +58,29 @@ combatHud.setAttribute('aria-live', 'off');
 combatHud.style.cssText = 'position:fixed;bottom:22px;right:22px;z-index:8;background:rgba(7,11,26,.78);border:1px solid #3ec5ff88;padding:12px 18px;border-radius:12px;color:white;font:700 16px system-ui;pointer-events:none';
 combatHud.textContent = '24 / 144';
 document.body.appendChild(combatHud);
+const pvpFeed = document.createElement('div');
+pvpFeed.id = 'pvp-feedback';
+pvpFeed.style.cssText = 'position:fixed;top:14%;left:50%;transform:translateX(-50%);z-index:9;color:#effaff;text-shadow:0 1px 9px #050813;font:800 24px system-ui;text-align:center;pointer-events:none;opacity:0';
+document.body.appendChild(pvpFeed);
+let pvpFeedbackTime = 0;
+addEventListener('mp:shot-feedback', event => {
+  const shot = event.detail;
+  if (!shot || !shot.hit || !pvpEnabled) return;
+  if (shot.playerId === multiplayerPlayerId) {
+    pvpFeed.textContent = shot.eliminated ? 'ПРОТИВНИК УНИЧТОЖЕН  +1' :
+      shot.headshot ? 'ПОПАДАНИЕ В ГОЛОВУ  -' + shot.damage : 'ПОПАДАНИЕ  -' + shot.damage;
+    pvpFeed.style.color = shot.eliminated ? '#ffd23f' : '#9fe7ff';
+    pvpFeedbackTime = performance.now() + 1100;
+    if (shot.position) {
+      fx.popup?.(new THREE.Vector3(...shot.position),
+        shot.eliminated ? 'ФРАГ!' : '-' + shot.damage, shot.eliminated ? '#ffd23f' : '#3ec5ff');
+    }
+  } else if (shot.victimId === multiplayerPlayerId) {
+    pvpFeed.textContent = shot.eliminated ? 'ВЫ УНИЧТОЖЕНЫ — ВОЗРОЖДЕНИЕ' : 'УРОН  -' + shot.damage;
+    pvpFeed.style.color = '#ff9b54';
+    pvpFeedbackTime = performance.now() + 1350;
+  }
+});
 
 const envBefore = new Set(scene.children);
 const env = buildEnvironment(scene);
@@ -811,6 +834,7 @@ renderer.setAnimationLoop(() => {
     const nextFov = THREE.MathUtils.lerp(camera.fov, targetFov, Math.min(1, dt * 13));
     if (Math.abs(camera.fov - nextFov) > 0.001) { camera.fov = nextFov; camera.updateProjectionMatrix(); }
   }
+  pvpFeed.style.opacity = pvpEnabled && performance.now() < pvpFeedbackTime ? '1' : '0';
   const ammo = combat.status;
   const ammoLabel = ammo.reloading ? 'ПЕРЕЗАРЯДКА…' : String(ammo.ammo).padStart(2, '0') + ' / ' + ammo.reserve;
   combatHud.textContent = pvpEnabled && sharedArena.playing
