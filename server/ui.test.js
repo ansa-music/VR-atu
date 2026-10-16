@@ -20,7 +20,7 @@ function fakeElement(id) {
 async function loadUI({legacy = false} = {}) {
   const names = legacy
     ? ['mp-panel','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join']
-    : ['mp-panel','mp-lobby','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join','mp-create-fields','mp-join-fields','mp-mode-create','mp-mode-join','mp-custom-code','mp-title','mp-max-players','mp-duration','mp-room-title','mp-room-info','mp-copy-code','mp-ranking','mp-leave'];
+    : ['mp-panel','mp-lobby','mp-status','mp-players','mp-code','mp-start','mp-name','mp-join-code','mp-server','mp-create','mp-join','mp-create-fields','mp-join-fields','mp-mode-create','mp-mode-join','mp-custom-code','mp-title','mp-max-players','mp-duration','mp-room-title','mp-room-info','mp-copy-code','mp-ranking','mp-leave','mp-resume','mp-guest-hint'];
   const items = new Map(names.map(id => [id, fakeElement(id)]));
   globalThis.document = { getElementById(id) { return items.get(id) || null; }, createElement: fakeElement };
   globalThis.window = new EventTarget();
@@ -82,4 +82,51 @@ test('old cached HTML does not break click listeners', async () => {
   }}));
   assert.equal(elements.get('mp-code').textContent,'123');
   assert.equal(elements.get('mp-players').children.length,1);
+});
+
+
+test('creator can start a shared match, UI then shows resume and restart', async () => {
+  const elements = await loadUI();
+  const sent = [];
+  window.addEventListener('mp:start-round', () => sent.push('network-start'));
+  window.addEventListener('game:start', () => sent.push('solo-start'));
+  const makeRoom = phase => ({
+    code: '123', hostId: 'host', phase, maxPlayers: 4, durationSec: 60,
+    players: [{ id: 'host', name: 'Хозяин' }, { id: 'guest', name: 'Друг' }],
+  });
+  window.dispatchEvent(new CustomEvent('mp:room:joined', {
+    detail: { playerId: 'host', room: makeRoom('lobby') },
+  }));
+  assert.equal(elements.get('mp-start').hidden, false);
+  assert.match(elements.get('mp-start').textContent, /Начать матч/);
+  elements.get('mp-start').click();
+  assert.deepEqual(sent, ['network-start'], 'network start must not run solo game');
+  window.dispatchEvent(new CustomEvent('mp:room:update', {
+    detail: { room: makeRoom('playing') },
+  }));
+  assert.equal(elements.get('mp-start').hidden, true);
+  assert.equal(elements.get('mp-resume').hidden, false);
+  window.dispatchEvent(new CustomEvent('mp:room:update', {
+    detail: { room: makeRoom('finished') },
+  }));
+  assert.equal(elements.get('mp-start').hidden, false);
+  assert.match(elements.get('mp-start').textContent, /новый матч/);
+});
+
+test('guest waits for creator and never sees start match button', async () => {
+  const elements = await loadUI();
+  const room = {
+    code: '123', hostId: 'host', phase: 'lobby',
+    players: [{ id: 'host', name: 'Хозяин' }, { id: 'guest', name: 'Друг' }],
+  };
+  window.dispatchEvent(new CustomEvent('mp:room:joined', {
+    detail: { playerId: 'guest', room },
+  }));
+  assert.equal(elements.get('mp-start').hidden, true);
+  assert.equal(elements.get('mp-guest-hint').hidden, false);
+  assert.match(elements.get('mp-status').textContent, /Ожидаем запуска/);
+  window.dispatchEvent(new CustomEvent('mp:room:update', {
+    detail: { room: { ...room, phase: 'playing' } },
+  }));
+  assert.equal(elements.get('mp-resume').hidden, false);
 });
