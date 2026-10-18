@@ -228,6 +228,29 @@ body.ov-open .vh-hud { display: none !important; }
   .vh-toast { font-size: 15px; }
   .vh-breath { width: 170px; }
 }
+/* ---- сенсорное управление (touch.js): компактная панель под кнопкой ОГОНЬ, стойка наверху ---- */
+body.touch-ui .vh-hint, body.touch-ui .vh-breath small, body.touch-ui .vh-w-sub { display: none !important; }
+body.touch-ui .vh-left {
+  top: calc(62px + env(safe-area-inset-top, 0px)); bottom: auto; left: calc(12px + env(safe-area-inset-left, 0px));
+}
+body.touch-ui .vh-weapon {
+  right: calc(8px + env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  min-width: 0; max-width: min(46vw, 230px); padding: 5px 10px 6px; border-radius: 12px;
+}
+body.touch-ui .vh-w-head { gap: 6px; }
+body.touch-ui .vh-w-name { font-size: 14px; }
+body.touch-ui .vh-w-mode, body.touch-ui .vh-w-slot { padding: 2px 5px; font-size: 10px; }
+body.touch-ui .vh-w-ammo { margin-top: 1px; }
+body.touch-ui .vh-a-mag { font-size: 28px; }
+body.touch-ui .vh-a-ch { margin-top: 2px; font-size: 12px; }
+body.touch-ui .vh-a-res { font-size: 14px; }
+body.touch-ui .vh-w-heat, body.touch-ui .vh-w-status { margin-top: 4px; }
+body.touch-ui .vh-w-heat .vh-bar { height: 6px; min-width: 60px; }
+body.touch-ui .vh-w-status .vh-bar { margin-top: 3px; height: 4px; }
+body.touch-ui .vh-weapon .vh-lbl { font-size: 10px; }
+@media (orientation: portrait) {
+  body.touch-ui .vh-weapon { bottom: calc(112px + env(safe-area-inset-bottom, 0px)); }
+}
 @media (prefers-reduced-motion: reduce) {
   .vh-hud *, .vh-hud *::before, .vh-hud *::after { transition: none !important; animation: none !important; }
 }

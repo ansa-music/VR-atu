@@ -1,7 +1,10 @@
 // Синтезированные звуки для VR Тира (Web Audio API, без аудиофайлов)
 let ctx = null;      // AudioContext (создаётся лениво)
 let master = null;   // общий мастер-гейн
+let sfxBus = null;   // шина эффектов (всё, кроме музыки) → master
 let noiseBuf = null; // кэш буфера белого шума
+let volMusic = 1;    // громкость музыки 0..1 (множитель MUSIC_VOL)
+let volSfx = 1;      // громкость эффектов 0..1
 
 // Контекст создаётся при первом вызове (внутри жеста пользователя)
 function ac() {
@@ -27,6 +30,9 @@ function ac() {
       out = comp;
     } catch (e) { /* без компрессора */ }
     master.connect(out);
+    sfxBus = ctx.createGain();
+    sfxBus.gain.value = volSfx;
+    sfxBus.connect(master);
   }
   if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   return ctx;
@@ -47,7 +53,7 @@ function tone(freq, dur, type = 'sine', vol = 0.1, slide = 0, delay = 0) {
   g.gain.exponentialRampToValueAtTime(vol, t + 0.005); // короткая атака без щелчка
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   osc.connect(g);
-  g.connect(master);
+  g.connect(sfxBus);
   osc.start(t);
   osc.stop(t + dur + 0.02);
 }
@@ -78,7 +84,7 @@ function noise(dur, vol, cutoff) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(f);
   f.connect(g);
-  g.connect(master);
+  g.connect(sfxBus);
   src.start(t);
   src.stop(t + dur + 0.02);
 }
@@ -117,7 +123,7 @@ function burst(o) {
   g.gain.exponentialRampToValueAtTime(0.0001, end);
   src.connect(f);
   f.connect(g);
-  g.connect(master);
+  g.connect(sfxBus);
   // случайный кусок шума — повторы не звучат одинаково
   src.start(t, Math.random() * (buf.duration - 0.05));
   src.stop(end + 0.02);
@@ -141,7 +147,7 @@ function sweep(o) {
   g.gain.linearRampToValueAtTime(o.vol || 0.1, t + a);
   g.gain.exponentialRampToValueAtTime(0.0001, end);
   osc.connect(g);
-  g.connect(master);
+  g.connect(sfxBus);
   osc.start(t);
   osc.stop(end + 0.02);
 }
@@ -170,7 +176,7 @@ function metal(base, ratios, vol, d, delay = 0, maxF = 15000) {
     g.gain.linearRampToValueAtTime(vol * amps[i] / sum, t + 0.0015);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dd);
     osc.connect(g);
-    g.connect(master);
+    g.connect(sfxBus);
     osc.start(t);
     osc.stop(t + dd + 0.02);
   });
@@ -616,7 +622,7 @@ export const music = {
       if (!c) return;
       musicGain = c.createGain();
       musicGain.gain.setValueAtTime(0.0001, c.currentTime);
-      musicGain.gain.linearRampToValueAtTime(MUSIC_VOL, c.currentTime + 0.1);
+      musicGain.gain.linearRampToValueAtTime(MUSIC_VOL * volMusic, c.currentTime + 0.1);
       musicGain.connect(master);
       bassFilter = c.createBiquadFilter();
       bassFilter.type = 'lowpass';
@@ -661,3 +667,29 @@ export const music = {
     } catch (e) { /* игнорируем */ }
   },
 };
+
+// ---------- Громкость ----------
+const clamp01 = (v, d) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d;
+};
+
+// плавно (50 мс) к новому значению — без щелчков
+function rampTo(param, v, t) {
+  param.cancelScheduledValues(t);
+  param.setValueAtTime(param.value, t);
+  param.linearRampToValueAtTime(v, t + 0.05);
+}
+
+// Громкость музыки и эффектов, 0..1. Без AudioContext значения запоминаются
+// и применяются, когда он создастся.
+export function setVolumes({ music: m, sfx: s } = {}) {
+  try {
+    if (m !== undefined) volMusic = clamp01(m, volMusic);
+    if (s !== undefined) volSfx = clamp01(s, volSfx);
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    if (sfxBus) rampTo(sfxBus.gain, volSfx, t);
+    if (musicGain) rampTo(musicGain.gain, MUSIC_VOL * volMusic, t); // во время stop() musicGain уже null
+  } catch (e) { /* звук не должен ломать игру */ }
+}

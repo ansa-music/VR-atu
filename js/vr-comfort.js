@@ -30,22 +30,25 @@ const VIG_FEATHER = 0.45; // ширина мягкого края
 const VIG_RING = VIG_SEG * 6; // индексы кольца
 const VIG_FULL = VIG_SEG * 9; // кольцо + центр (для затемнения)
 
-// подсказки: атлас 512×512, строка 100 px, 4200 px на метр
+// подсказки: атлас 512 px в ширину, высота по числу строк (строка 100 px), 4200 px на метр
 const ATLAS = 512, ROW = 100, PPM = 4200, ROW_GAP = 0.004;
 
 // at — примерная точка кнопки в пространстве луча контроллера Quest, м
 const HINTS_RIGHT = [
   { key: 'Курок', act: 'огонь', at: [0, -0.026, 0.012] },
   { key: 'Стик', act: 'поворот', sub: '(нажатие — режим огня)', at: [-0.006, -0.003, 0.04] },
-  { key: 'B', act: 'след. оружие', at: [0.014, -0.004, 0.036] },
+  { key: 'B', act: 'след. оружие', sub: '(или возьмите с пояса/плеча)', at: [0.014, -0.004, 0.036] },
   { key: 'A', act: 'прыжок', at: [0.011, -0.006, 0.054] },
   { key: 'Хват', act: 'прицел', at: [-0.018, -0.05, 0.06] },
+  { key: 'Хват', act: 'взять оружие', sub: '(рука у бедра или плеча)', at: [-0.018, -0.05, 0.06] },
 ];
 const HINTS_LEFT = [
   { key: 'Стик', act: 'ходьба', sub: '(нажатие — бег)', at: [0.006, -0.003, 0.04] },
   { key: 'Y', act: 'пред. оружие', at: [-0.014, -0.004, 0.036] },
   { key: 'X', act: 'присесть', at: [-0.011, -0.006, 0.054] },
   { key: 'Хват', act: 'перезарядка', at: [0.018, -0.05, 0.06] },
+  { key: 'Хват', act: 'магазин', sub: '(рука у пояса спереди)', at: [0.018, -0.05, 0.06] },
+  { key: 'Хват', act: 'двумя руками', sub: '(рука у цевья)', at: [0.018, -0.05, 0.06] },
 ];
 
 const VIG_VERT = /* glsl */ `
@@ -146,33 +149,39 @@ function drawTag(L, str, textColor, glowColor, border, size) {
 
 // атлас подсказок одной руки: строка на кнопку, возвращает ширины табличек в px
 function drawHintAtlas(ctx, list) {
-  const PAD = 22;
+  const PAD = 22, MAXT = ATLAS - PAD * 2;
   const widths = [];
-  ctx.clearRect(0, 0, ATLAS, ATLAS);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   for (let i = 0; i < list.length; i++) {
     const h = list[i], y = i * ROW, rest = ` — ${h.act}`;
     ctx.font = `bold 34px ${FONT}`;
-    const kw = ctx.measureText(h.key).width;
-    let tw = kw + ctx.measureText(rest).width;
+    let kw = ctx.measureText(h.key).width;
+    const mw = kw + ctx.measureText(rest).width;
+    let sw = 0;
     if (h.sub) {
       ctx.font = `25px ${FONT}`;
-      tw = Math.max(tw, ctx.measureText(h.sub).width);
+      sw = ctx.measureText(h.sub).width;
     }
+    // не влезает в атлас — уменьшаем шрифт строки, а не обрезаем текст
+    const s1 = Math.floor(34 * Math.min(1, MAXT / mw));
+    const s2 = sw ? Math.floor(25 * Math.min(1, MAXT / sw)) : 25;
+    const tw = Math.max(mw * s1 / 34, sw * s2 / 25);
     const w = Math.min(ATLAS, Math.ceil(tw + PAD * 2));
     widths.push(w);
     panel(ctx, 4, y + 5, w - 8, ROW - 10, 20, NEON, 4);
     const y1 = h.sub ? y + 37 : y + ROW / 2;
-    ctx.font = `bold 34px ${FONT}`;
+    ctx.font = `bold ${s1}px ${FONT}`;
+    kw = ctx.measureText(h.key).width;
     ctx.fillStyle = '#9fe7ff';
     ctx.fillText(h.key, PAD, y1);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(rest, PAD + kw, y1);
+    ctx.fillText(rest, PAD + kw, y1, Math.max(1, MAXT - kw));
     if (h.sub) {
-      ctx.font = `25px ${FONT}`;
+      ctx.font = `${s2}px ${FONT}`;
       ctx.fillStyle = '#8fa3d9';
-      ctx.fillText(h.sub, PAD, y + 70);
+      ctx.fillText(h.sub, PAD, y + 70, MAXT);
     }
   }
   return widths;
@@ -205,7 +214,8 @@ function vignetteGeometry() {
 
 // подсказки одной руки: все таблички одним мешем + выноски одним LineSegments
 function buildHand(side, list, lineMat, aniso) {
-  const L = canvasMaterial(ATLAS, ATLAS, aniso);
+  const AH = Math.ceil((list.length * ROW) / 4) * 4; // высота атласа: строка на кнопку
+  const L = canvasMaterial(ATLAS, AH, aniso);
   const widths = drawHintAtlas(L.ctx, list);
   L.texture.needsUpdate = true;
 
@@ -225,7 +235,7 @@ function buildHand(side, list, lineMat, aniso) {
     const qw = widths[i] / PPM;
     const x0 = side > 0 ? 0 : -qw, x1 = side > 0 ? qw : 0;
     pos.set([x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0], i * 12);
-    const u1 = widths[i] / ATLAS, v1 = 1 - (i * ROW) / ATLAS, v0 = 1 - ((i + 1) * ROW) / ATLAS;
+    const u1 = widths[i] / ATLAS, v1 = 1 - (i * ROW) / AH, v0 = 1 - ((i + 1) * ROW) / AH;
     uv.set([0, v0, u1, v0, u1, v1, 0, v1], i * 8);
     const b = i * 4;
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3);

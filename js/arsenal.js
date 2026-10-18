@@ -299,6 +299,49 @@ export class Weapon {
       : { kind: 'shell-end', t: 0, dur: d.shellEnd, marks: 0 };
   }
 
+  // ---------- ручные действия в VR (руками, без таймера) ----------
+  // магазинное оружие: ПМ, АК, СВ-98
+  get magFed() { const a = this.def.action; return a === 'semi' || a === 'auto' || a === 'bolt'; }
+  // магазин вставлен, но патрон не дослан — надо передёрнуть затвор
+  get needsRack() { return this.magFed && !this.chamber && this.mag > 0 && !this.cycle && !this.reloading; }
+
+  // смена магазина рукой: патрон в патроннике не трогаем
+  manualMagSwap() {
+    if (!this.magFed || this.reserve <= 0 || this.cycle > 0) return false;
+    this.cancelReload();
+    this.emit('mag-out');
+    this.topUp();
+    this.emit('mag-in');
+    return true;
+  }
+
+  // передёрнуть затвор/рукоятку: живой патрон вылетает, из магазина досылается следующий
+  manualRack() {
+    if (!this.magFed || this.cycle > 0) return false;
+    this.cancelReload();
+    let moved = false;
+    if (this.mag > 0) {
+      if (this.chamber) this.emit('eject');
+      this.mag--;
+      this.chamber = 1;
+      moved = true;
+    }
+    this.emit('rack'); // звук затвора есть и вхолостую
+    return moved;
+  }
+
+  // ружьё: один патрон рукой в подствольный магазин
+  manualInsertShell() {
+    const d = this.def;
+    if (d.action !== 'pump' || this.mag >= d.mag || this.reserve <= 0) return false;
+    this.cancelReload();
+    this.mag++;
+    this.reserve--;
+    this.emit('shell-in');
+    if (!this.chamber && this.cycle <= 0) this.startCycle(false); // помпа сама дошлёт патрон
+    return true;
+  }
+
   // Полуугол рассеивания, градусы. aim 0..1, speed — доля скорости шага.
   spread({ aim = 0, speed = 0, air = false, crouch = false } = {}) {
     const s = this.def.spread;

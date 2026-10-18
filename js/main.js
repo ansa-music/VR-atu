@@ -20,10 +20,14 @@ const sound = (name, ...args) => { try { sfx[name]?.(...args); } catch {} };
 
 // модули оружия, персонажа, графики и интерфейса: если какой-то не загрузился, игра всё равно работает
 const load = (path) => import(path).catch((e) => { console.warn('Модуль не загружен:', path, e); return {}; });
-const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod, comfortMod] = await Promise.all([
+const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod, comfortMod, settingsMod, holsterMod, handlingMod, touchMod] = await Promise.all([
   load('./guns.js'), load('./character.js'), load('./graphics.js'), load('./ballistics.js'),
   load('./range.js'), load('./logo.js'), load('./hud.js'), load('./vr-comfort.js'),
+  load('./settings.js'), load('./vr-holsters.js'), load('./vr-handling.js'), load('./touch.js'),
 ]);
+// настройки игрока; если модуль не загрузился — значения по умолчанию
+const userSettings = settingsMod.settings || { sensitivity: 1, fov: 70, invertY: false, musicVolume: 0.7, sfxVolume: 1, turn: 'snap', vignette: true, vrReload: 'hands', holsters: true, leftHanded: false };
+const deskFov = () => THREE.MathUtils.clamp(Number(userSettings.fov) || 70, 60, 100);
 const safeCall = (fn, ...args) => { try { return fn ? fn(...args) : null; } catch (e) { console.warn(e); return null; } };
 
 const ROUND_TIME = 60;
@@ -51,7 +55,7 @@ document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(BASE_FOV, innerWidth / innerHeight, 0.03, 300);
+const camera = new THREE.PerspectiveCamera(deskFov(), innerWidth / innerHeight, 0.03, 300);
 camera.rotation.order = 'YXZ';
 
 // игрок: камера и контроллеры внутри рига, двигаем риг
@@ -573,7 +577,9 @@ function onBulletHit(shot, hit) {
         const m = addCombo(point, shot.controller);
         const pts = res.points * m;
         score += pts;
-        fx.popup(point.clone().add(tmpV.set(0, 0.8 + dist * 0.02, 0)), '+' + pts, '#ffd23f', Math.max(1, dist / 7));
+        // в оптике (поле зрения ~6°) надпись в 12 раз ближе по угловому размеру — делаем её меньше
+        const popScale = scoped ? Math.max(1, dist / 40) : Math.max(1, dist / 9);
+        fx.popup(point.clone().add(tmpV.set(0, 0.6 + popScale * 0.25, 0)), '+' + pts, '#ffd23f', popScale);
         notify(`+${pts} · ${res.label}`, '#ffd23f');
         mk.send('G');
         vibrate(shot.controller, 0.5, 60);
@@ -610,12 +616,22 @@ function setRayFromController(c) {
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpMat);
 }
 
-// луч выстрела: ПК — из камеры через точку экрана, VR — из контроллера
+// луч выстрела: ПК — из камеры через точку экрана, VR — из дула вдоль ствола
+// (ствол может быть повёрнут хватом двумя руками, поэтому берём ориентацию самой модели)
+const gunQuat = new THREE.Quaternion();
 function aimRay(source) {
   if (source.controller) {
-    setRayFromController(source.controller);
     const g = handGun(source.controller);
-    if (g?.muzzle) g.muzzle.getWorldPosition(muzzlePos); else muzzlePos.copy(raycaster.ray.origin);
+    if (g?.muzzle && g.group.visible) {
+      g.group.updateWorldMatrix(true, true);
+      g.muzzle.getWorldPosition(muzzlePos);
+      g.group.getWorldQuaternion(gunQuat);
+      raycaster.ray.direction.set(0, 0, -1).applyQuaternion(gunQuat);
+      raycaster.ray.origin.copy(muzzlePos).addScaledVector(raycaster.ray.direction, -0.05);
+    } else {
+      setRayFromController(source.controller);
+      muzzlePos.copy(raycaster.ray.origin);
+    }
   } else {
     camera.updateMatrixWorld(true);
     raycaster.setFromCamera(source.ndc || CENTER, camera);
@@ -675,7 +691,8 @@ function tryShoot(first, source) {
   shotDir.copy(raycaster.ray.direction);
   basisFor(shotDir);
   if (controller && vrKick) shotDir.addScaledVector(basisY, vrKick).normalize();
-  const ctx = { aim: aimAmt, speed: speedFrac, air: !onGround, crouch: isCrouched() };
+  const steady = controller && handling?.twoHand ? handling.stability : 0; // хват двумя руками
+  const ctx = { aim: Math.max(aimAmt, steady), speed: speedFrac, air: !onGround, crouch: isCrouched() };
   const [sx, sy] = sampleSpread(w.spread(ctx));
   shotDir.addScaledVector(basisX, sx).addScaledVector(basisY, sy + zeroAngle(d)).normalize();
 
@@ -704,7 +721,7 @@ function tryShoot(first, source) {
   // отдача
   const k = w.kick(ctx);
   if (controller) {
-    vrKick = Math.min(0.12, vrKick + toRad(k.pitch) * 0.35);
+    vrKick = Math.min(0.12, vrKick + toRad(k.pitch) * 0.35 * (1 - 0.6 * steady));
   } else {
     recoilP += toRad(k.pitch);
     recoilY += toRad(k.yaw);
@@ -789,9 +806,9 @@ addEventListener('mouseup', (e) => {
 
 document.addEventListener('mousemove', (e) => {
   if (!locked()) return;
-  const sens = 0.0022 * (camera.fov / BASE_FOV); // в оптике мышь медленнее
+  const sens = 0.0022 * (userSettings.sensitivity || 1) * (camera.fov / deskFov()); // в оптике мышь медленнее
   yaw -= e.movementX * sens;
-  pitch = rand.clamp(pitch - e.movementY * sens, -1.4, 1.4);
+  pitch = rand.clamp(pitch - e.movementY * sens * (userSettings.invertY ? -1 : 1), -1.4, 1.4);
 });
 
 const mpControlsTip = document.getElementById('mp-controls-tip');
@@ -907,7 +924,7 @@ const controllers = [0, 1].map((i) => {
       c.userData.wrist = safeCall(charMod.createWristHud);
       if (c.userData.wrist?.group) c.add(c.userData.wrist.group);
     }
-    if (side === 'right' || !weaponHand) weaponHand = c;
+    if (side === (userSettings.leftHanded ? 'left' : 'right') || !weaponHand) weaponHand = c;
   });
   c.addEventListener('disconnected', () => {
     c.userData.src = null;
@@ -916,9 +933,8 @@ const controllers = [0, 1].map((i) => {
   });
   c.addEventListener('selectstart', () => { c.userData.trigHeld = true; c.userData.trigFirst = true; });
   c.addEventListener('selectend', () => { c.userData.trigHeld = false; });
-  // хват: в руке с оружием — прицеливание, в другой — перезарядка
-  c.addEventListener('squeezestart', () => { if (c === weaponHand) vrAim = true; else arsenal.current.startReload(); });
-  c.addEventListener('squeezeend', () => { if (c === weaponHand) vrAim = false; });
+  c.addEventListener('squeezestart', () => onSqueeze(c, true));
+  c.addEventListener('squeezeend', () => onSqueeze(c, false));
   rig.add(c);
   scene.add(dot);
   return c;
@@ -926,61 +942,75 @@ const controllers = [0, 1].map((i) => {
 let vrAim = false, vrCrouch = false, vrSprint = false;
 // комфорт в шлеме: виньетка при движении, моргание при повороте, подсказки по кнопкам
 const comfort = safeCall(comfortMod.createVrComfort, { renderer, camera, controllers });
-buildSettingsUi();
+// VR: кобуры на теле, хват двумя руками и ручная перезарядка
+const holsters = safeCall(holsterMod.createVrHolsters, { camera, rig });
+const handling = safeCall(handlingMod.createVrHandling, { scene, camera });
 
-// блок «Настройки» на стартовом экране: качество графики и комфорт в VR
-function buildSettingsUi() {
-  const host = document.querySelector('.ov-inner');
-  if (!host || document.getElementById('settings-section')) return;
-  const sec = document.createElement('section');
-  sec.id = 'settings-section';
-  sec.setAttribute('aria-label', 'Настройки графики и VR');
-  sec.style.cssText = 'max-width:680px;margin:18px auto 0;padding:16px 20px;border:1px solid rgba(62,197,255,.3);border-radius:18px;background:rgba(8,12,35,.78);text-align:left;display:grid;gap:10px';
-  const row = 'display:flex;justify-content:space-between;align-items:center;gap:12px;color:#e8edff;font-size:14px';
-  const sel = 'padding:8px 10px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit';
-  let saved = null;
-  try { saved = localStorage.getItem('vr-tir-quality'); } catch {}
-  sec.innerHTML = `
-    <b style="color:#9fe7ff;letter-spacing:.08em">НАСТРОЙКИ</b>
-    <label style="${row}">Качество графики
-      <select id="set-quality" style="${sel}">
-        <option value="auto">Авто (сейчас: ${quality.label.toLowerCase()})</option>
-        ${Object.values(QUALITY).map((q) => `<option value="${q.id}">${q.label}</option>`).join('')}
-      </select></label>
-    <label style="${row}">Поворот в VR
-      <select id="set-turn" style="${sel}"><option value="snap">Рывком на 45°</option><option value="smooth">Плавно</option></select></label>
-    <label style="${row}">Затемнение краёв при движении в VR
-      <select id="set-vignette" style="${sel}"><option value="on">Включено</option><option value="off">Выключено</option></select></label>
-    <small id="set-note" style="color:#a9b6e6">Качество «Низкое» включается само в автономных шлемах (Quest, Pico).</small>`;
-  const anchor = document.getElementById('mp-section') || host.querySelector('.ov-foot');
-  host.insertBefore(sec, anchor || null);
-
-  const q = sec.querySelector('#set-quality');
-  const turn = sec.querySelector('#set-turn');
-  const vig = sec.querySelector('#set-vignette');
-  q.value = QUALITY[saved] ? saved : 'auto';
-  turn.value = comfort?.settings?.turn === 'smooth' ? 'smooth' : 'snap';
-  vig.value = comfort?.settings?.vignette === false ? 'off' : 'on';
-  const saveComfort = () => {
-    if (comfort?.settings) {
-      comfort.settings.turn = turn.value;
-      comfort.settings.vignette = vig.value === 'on';
-    }
-    try {
-      const prev = JSON.parse(localStorage.getItem('vr-tir-comfort') || '{}');
-      localStorage.setItem('vr-tir-comfort', JSON.stringify({ ...prev, turn: turn.value, vignette: vig.value === 'on' }));
-    } catch {}
-  };
-  turn.addEventListener('change', saveComfort);
-  vig.addEventListener('change', saveComfort);
-  q.addEventListener('change', () => {
-    try {
-      if (q.value === 'auto') localStorage.removeItem('vr-tir-quality');
-      else localStorage.setItem('vr-tir-quality', q.value);
-    } catch {}
-    sec.querySelector('#set-note').textContent = 'Новое качество применится после перезагрузки страницы.';
-  });
+// настройки игрока (блок «Настройки» на стартовом экране)
+settingsMod.buildSettingsUi?.({ qualityLabel: quality.label.toLowerCase() });
+function applySettings(key) {
+  if (!key || key === 'musicVolume' || key === 'sfxVolume') {
+    audio.setVolumes?.({ music: userSettings.musicVolume ?? 0.7, sfx: userSettings.sfxVolume ?? 1 });
+  }
+  if (comfort?.settings && (!key || key === 'turn' || key === 'vignette')) {
+    comfort.settings.turn = userSettings.turn === 'smooth' ? 'smooth' : 'snap';
+    comfort.settings.vignette = userSettings.vignette !== false;
+  }
+  if (!key || key === 'leftHanded') holsters?.setLeftHanded?.(!!userSettings.leftHanded);
+  if (!key || key === 'fov') placeViewModel?.();
 }
+settingsMod.onSettingsChange?.((key) => applySettings(key));
+
+const offHand = () => controllers.find((k) => k !== weaponHand && k.userData.src) || null;
+
+// хват (grip) по приоритету: кобура → свободной рукой цевьё/подсумок/затвор → прицел или перезарядка
+function onSqueeze(c, down) {
+  const u = c.userData;
+  if (!down) {
+    if (u.grabbed) { handling?.release?.(c); u.grabbed = null; }
+    if (c === weaponHand) vrAim = false;
+    return;
+  }
+  const slot = userSettings.holsters !== false ? holsters?.zoneOf?.(c) ?? -1 : -1;
+  if (slot >= 0) {
+    if (c !== weaponHand) { handling?.release?.(c); weaponHand = c; vrAim = false; }
+    if (!arsenal.select(slot)) sound('draw');
+    vibrate(c, 0.5, 40);
+    return;
+  }
+  if (c !== weaponHand) {
+    const what = handling?.grab?.(c, { gun: handGun(weaponHand), weaponHand, weapon: arsenal.current });
+    if (what === 'pouch' && userSettings.vrReload === 'button') handling.release(c);
+    else if (what) { u.grabbed = what; return; }
+    if (userSettings.vrReload !== 'hands') arsenal.current.startReload();
+    return;
+  }
+  vrAim = true;
+}
+
+// каждый кадр в шлеме: кобуры и действия свободной руки
+function updateVrHands(dt) {
+  holsters?.update?.(dt, { controllers, current: arsenal.index, weaponHand, enabled: userSettings.holsters !== false });
+  if (!handling) return;
+  const events = handling.update(dt, {
+    gun: handGun(weaponHand), weaponHand, offHand: offHand(), weapon: arsenal.current,
+    enabled: arsenal.ready, leftHanded: !!userSettings.leftHanded,
+  });
+  for (const e of events || []) {
+    if (e.type === 'mag-inserted' || e.type === 'shell-inserted' || e.type === 'racked') vibrate(weaponHand, 0.4, 40);
+    if (e.type === 'mag-inserted' && arsenal.current.needsRack) notify('Передёрните затвор', '#ffd23f');
+  }
+}
+
+// телефон и планшет: экранный джойстик, обзор пальцем, кнопки
+const touch = safeCall(touchMod.createTouchControls);
+touch?.onAction?.((name) => {
+  if (name === 'reload') arsenal.current.startReload();
+  else if (name === 'jump') jumpRequested = true;
+  else if (name === 'next') arsenal.step(1);
+  else if (name === 'prev') arsenal.step(-1);
+  else if (name === 'mode') arsenal.current.toggleMode();
+});
 
 // ПК: оружие и рука от первого лица в правом нижнем углу
 const viewModel = new THREE.Group();
@@ -989,7 +1019,7 @@ const vmHip = new THREE.Vector3();
 const vmAds = new THREE.Vector3();
 // на узком экране оружие ближе к центру, чтобы не уходило за край
 function placeViewModel() {
-  const halfW = Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2)) * camera.aspect * 0.38;
+  const halfW = Math.tan(THREE.MathUtils.degToRad(deskFov() / 2)) * camera.aspect * 0.38;
   vmHip.set(Math.min(0.17, halfW * 0.5), -0.17, -0.38);
 }
 placeViewModel();
@@ -1083,6 +1113,10 @@ function handleTriggers() {
     pcTrigger.first = false;
     if (!locked() && pcTrigger.ndc) pcTrigger.held = false; // без захвата мыши — только одиночные
   }
+  if (touch?.active && !renderer.xr.isPresenting) {
+    const first = touch.takeFirePress();
+    if (first || touch.fire) tryShoot(first, { ndc: null });
+  }
   if (mkTrigger.first || (mk.connected && mk.btn)) {
     const src = renderer.xr.isPresenting && weaponHand ? { controller: weaponHand } : { ndc: null };
     tryShoot(mkTrigger.first, src);
@@ -1135,6 +1169,9 @@ function updateMovement(dt) {
   move.x += mk.x;
   move.y += mk.y;
 
+  // экранный джойстик на телефоне
+  if (touch?.active && !xr) { move.x += touch.move.x; move.y += touch.move.y; }
+
   // VR: левый стик — ходьба, правый — поворот рывком на 45°
   if (xr) {
     for (const c of controllers) {
@@ -1173,9 +1210,9 @@ function updateMovement(dt) {
   }
 
   const w = arsenal.current;
-  const wantCrouch = xr ? vrCrouch : keys.has('KeyC');
+  const wantCrouch = xr ? vrCrouch : keys.has('KeyC') || !!touch?.crouch;
   const shift = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const wantSprint = (xr ? vrSprint : shift) && move.y > 0.5 && onGround && !wantCrouch && aimAmt < 0.3 && !aimHeld && !vrAim;
+  const wantSprint = (xr ? vrSprint : shift || !!touch?.sprint) && move.y > 0.5 && onGround && !wantCrouch && aimAmt < 0.3 && !aimHeld && !vrAim;
   if (sprinting && !wantSprint) sprintLock = Math.max(sprintLock, 0.18); // переход с бега на стрельбу
   sprinting = wantSprint;
   if (xr && vrSprint && move.y < 0.3) vrSprint = false;
@@ -1262,7 +1299,7 @@ function updateAim(dt, time) {
   const xr = renderer.xr.isPresenting;
   const w = arsenal.current, d = w.def;
   // в прицел нельзя на бегу, при перезарядке и смене оружия
-  const want = (xr ? vrAim : aimHeld) && arsenal.ready && !w.reloading && !sprinting;
+  const want = (xr ? vrAim : aimHeld || !!touch?.aim) && arsenal.ready && !w.reloading && !sprinting;
   aimAmt = want ? Math.min(1, aimAmt + dt / d.adsTime) : Math.max(0, aimAmt - dt / (d.adsTime * 0.8));
   const nowScoped = !xr && !!d.zoom && aimAmt >= 0.95;
   if (nowScoped && !scoped) sound('scopeIn');
@@ -1296,7 +1333,7 @@ function updateAim(dt, time) {
   camera.rotation.set(pitch + recoilP + punch + swayP, yaw + recoilY + swayY, roll);
 
   // поле зрения: бег шире, прицел уже, оптика 7×
-  const baseFov = BASE_FOV + 6 * sprintAmt;
+  const baseFov = deskFov() + 6 * sprintAmt;
   const fov = scoped ? scopeFov(d) : THREE.MathUtils.lerp(baseFov, d.adsFov, aimAmt * aimAmt * (3 - 2 * aimAmt));
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
@@ -1371,7 +1408,7 @@ function renderScopeLens() {
     scopeCam = new THREE.PerspectiveCamera(scopeFov(arsenal.current.def), 1, 1.2, 300); // поле зрения прицела 7×
   }
   scopeCam.position.copy(lensPos);
-  weaponHand.getWorldQuaternion(scopeCam.quaternion);
+  g.group.getWorldQuaternion(scopeCam.quaternion); // по стволу: учитывает хват двумя руками
   if (g.lens.material.map !== scopeRT.texture) { g.lens.material.map = scopeRT.texture; g.lens.material.color?.set(0xffffff); g.lens.material.needsUpdate = true; }
   if (!g.lens.userData.reticle) g.lens.userData.reticle = addLensReticle(g.lens);
   const xrOn = renderer.xr.enabled;
@@ -1401,14 +1438,16 @@ renderer.xr.addEventListener('sessionstart', () => {
   viewModel.visible = false; // в шлеме оружие в руках, а не у камеры
   camera.position.set(0, 0, 0);
   camera.rotation.set(0, 0, 0);
-  camera.fov = BASE_FOV;
+  camera.fov = deskFov();
   camera.updateProjectionMatrix();
+  touch?.setVisible?.(false);
   emit('game:xr', { active: true });
 });
 renderer.xr.addEventListener('sessionend', () => {
   viewModel.visible = hasGuns;
   rig.position.y = 0;
   camera.position.set(0, EYE_HEIGHT, 0);
+  touch?.setVisible?.(true);
   emit('game:xr', { active: false });
 });
 
@@ -1515,6 +1554,7 @@ function warmup() {
   try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
   syncGunVisibility();
 }
+applySettings();
 warmup();
 
 // ---------- игровой цикл ----------
@@ -1528,6 +1568,12 @@ renderer.setAnimationLoop(() => {
 
   updateHead();
   if (xr) pollVrButtons();
+  if (!xr && touch?.active) {
+    const [dx, dy] = touch.consumeLook();
+    const sens = 0.004 * (userSettings.sensitivity || 1) * (camera.fov / deskFov());
+    yaw -= dx * sens;
+    pitch = rand.clamp(pitch - dy * sens * (userSettings.invertY ? -1 : 1), -1.4, 1.4);
+  }
   updateMovement(dt);
   updateAim(dt, time);
   updateHead();
@@ -1559,6 +1605,7 @@ renderer.setAnimationLoop(() => {
   }
   if (arsenal.current.def.id !== lastWeaponId) { lastWeaponId = arsenal.current.def.id; syncGunVisibility(); aimAmt = 0; }
   if (xr) syncGunVisibility();
+  if (xr) updateVrHands(dt);
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
 
@@ -1651,6 +1698,9 @@ if (/[?&]debug\b/.test(location.search)) {
     aim(on = true) { aimHeld = on; },
     fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
     select(i) { arsenal.select(i); },
+    get touch() { return touch; },
+    get holsters() { return holsters; },
+    get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
     get info() {
       const i = renderer.info;
