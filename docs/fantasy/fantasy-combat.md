@@ -1,7 +1,7 @@
 # fantasy-combat — оружие и противники (аккаунт 3 «Бой»)
 
 Ветка `fantasy-combat` от `fantasy` (ae00e50). `js/main.js` не менялся — подключение делает ядро (аккаунт 1).
-Проверено: логика в Node (`tests/node/*.test.mjs`), сцена — `tests/combat.html` в Chromium (ПК-режим и эмулятор Quest 3 `?xr`). В настоящем шлеме не проверялось.
+Проверено: логика в Node (оружие, лук/клинок, режимы, противники — 53 проверки, включая отсутствие аллокаций в кадре) (`tests/node/*.test.mjs`), сцена — `tests/combat.html` в Chromium (ПК-режим и эмулятор Quest 3 `?xr`). В настоящем шлеме не проверялось.
 
 ## Что готово
 | Файл | Что внутри |
@@ -68,6 +68,7 @@ createFantasyGun(id, { color, quality, glb = true }) → {
 ```
 - Интерфейс как у `createGun` из `js/guns.js`: рукоять в `GRIP` (перчатка подходит), вперёд −Z. Геометрия кэшируется на тип. Меши: wand 4, staff 5, blade 5, bow 5 (+ тетива LineSegments), gauntlet 4; +1 спрайт ореола.
 - GLB: если `assets/models/<id>.glb` есть (сейчас есть все 5), вид подменяется на GLB через `assets.js`, маркеры Muzzle/String/Tip/Crystal переносятся. **Процедурные модели выглядят заметно лучше GPT-моделей** — чтобы оставить их, передайте `glb: false`. Решение за ядром/пользователем.
+- GLB-лук из `assets/models` без маркеров `StringTop`/`StringBottom`: тетива рисуется по процедурным точкам, а своя тетива GLB статична — с `glb: false` лук выглядит правильно.
 - Треугольники процедурных: staff и bow ≈ 8,5 тыс. (выше бюджета GLB 5000, но 4–5 вызовов отрисовки). Если Quest не тянет — `glb: true` (GLB по 400–950).
 
 ## bow.js
@@ -98,7 +99,7 @@ slashes.update(dt, { hittables: enemies.meshes, onHit: ({ object, instanceId, po
 
 ## enemies.js
 ```js
-const enemies = createEnemies(scene, { quality });
+const enemies = createEnemies(scene, { quality, glb });   // glb: по умолчанию GLB только у огонька и стража; false — все процедурные; ['wisp',…] — свой набор
 enemies.spawn(type, position?) → enemy | null   // 'wisp'|'fairy'|'skull'|'guardian'|'eye'|'boss'; без position — перед игроком
 enemies.update(dt, { headPos, headDir, timeScale }) → events  // всё мировое время = dt * timeScale (ускорение восприятия ×0.25)
 enemies.meshes                                    // для Raycaster: тела и слабые места (InstancedMesh → intersection.instanceId)
@@ -107,6 +108,8 @@ enemies.hit(mesh, point, { damage = 1, element = null|'fire'|'ice'|'lightning'|'
 enemies.explode(point, radius, { damage, element }) → [результаты как у hit]   // урон по области
 enemies.threat(origin, dir)                       // вызывать на каждый выстрел игрока: огоньки уворачиваются
 enemies.count, enemies.countOf(type), enemies.boss, enemies.active, enemies.clear(), enemies.setVisible(b), enemies.dispose()
+enemies.group, enemies.capacity, enemies.modelsReady /*Promise*/, enemies.glbUsed
+// враг (enemy): type, position (= pos), center (точка прицеливания: руна стража, ядро босса), hp, maxHp, phase, alive
 enemies.projectiles = {
   list,                                    // ТОЛЬКО живые огненные шары; у каждого position (Vector3), velocity, deflected
   hitTest(from, to, radius = 0) → { projectile, point, distance } | null,  // отрезок (пуля, кончик клинка)
@@ -114,14 +117,15 @@ enemies.projectiles = {
   destroy(projectile),                     // сбит выстрелом
 }
 ```
-**Противники:** огонёк-дух +1 (уворачивается, улетает через ~9 с), золотая фея +3 (3 с), проклятый череп −5 (штраф за попадание), каменный страж +8 (тело неуязвимо → `blocked: true`; уязвим руной на груди — `weakPoint`, или любым попаданием с `element: 'rune'`), летучий глаз +5 (3 хп, заряжается и стреляет огненным шаром в голову), каменный колосс +150 (60 хп; лавовое ядро — ×3 урона, тело ×0.25; залпы 3/5 шаров, фаза 2 на 50 %).
+**Противники:** (события из `hit()`/`spawn()`/`deflect()` между кадрами приходят в следующем `update()`; молния не перескакивает на черепа и стражей; босс 2,2 с поднимается из земли и только потом атакует)
+Огонёк-дух +1 (уворачивается, улетает через ~9 с), золотая фея +3 (3 с), проклятый череп −5 (штраф за попадание), каменный страж +8 (идёт к игроку до 1,7 м и бьёт кулаком: замах 0,7 с — `charge`, затем `player-hit` damage 2; тело неуязвимо → `blocked: true`; уязвим руной на груди — `weakPoint`, или любым попаданием с `element: 'rune'`), летучий глаз +5 (3 хп, заряжается и стреляет огненным шаром в голову), каменный колосс +150 (60 хп; лавовое ядро — ×3 урона, тело ×0.25; залпы 3/5 шаров, фаза 2 на 50 %).
 **Стихии:** огонь — поджог 1/с на 3 с; лёд — замедление ×0.4 на 3 с; молния — цепь до 3 соседей в 4 м (×0.6).
 **События `update()`** (поле `type`; векторы из пула — копировать):
 | type | поля | что делать в main.js |
 |---|---|---|
 | `fireball` | origin, dir, speed, projectile | звук `fireball` |
 | `charge` | enemy | звук заряда (глаз/босс) |
-| `player-hit` | damage, projectile, point | урон игроку: `director.damagePlayer(damage)`, вспышка, вибрация |
+| `player-hit` | damage, projectile (у удара стража — null, есть enemy), point | урон игроку: `director.damagePlayer(damage)`, вспышка, вибрация |
 | `killed` | enemy, points, position | смерть от поджога/цепи/шара — очки |
 | `projectile-hit` | projectile, enemy, killed, points | отражённый шар попал во врага |
 | `burst` | position, color, kind | частицы `fx.burst` |
