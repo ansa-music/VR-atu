@@ -638,7 +638,8 @@ function getGLB(id) {
 }
 
 // ======================= сборка экземпляра =======================
-export function createFantasyGun(id, { color = 0x7fd8ff, quality } = {}) {
+// glb: false — всегда процедурная модель (даже если есть assets/models/<id>.glb)
+export function createFantasyGun(id, { color = 0x7fd8ff, quality, glb = true } = {}) {
   if (!BUILD[id]) return null;
   const def = getDef(id);
   const sm = sharedMats(quality && quality.id === 'low');
@@ -704,6 +705,7 @@ export function createFantasyGun(id, { color = 0x7fd8ff, quality } = {}) {
     top.fromArray(def.stringTop); bot.fromArray(def.stringBot); nock0.fromArray(def.nock);
     string = new THREE.Object3D(); string.name = 'string';
     string.position.copy(nock0); body.add(string);
+    string.userData.restLocal = nock0; // точка покоя тетивы (обновляется при подмене на GLB) — для bow.js
     const sg = new THREE.BufferGeometry();
     strAttr = new THREE.BufferAttribute(new Float32Array(12), 3);
     strAttr.setUsage(THREE.DynamicDrawUsage);
@@ -852,7 +854,7 @@ export function createFantasyGun(id, { color = 0x7fd8ff, quality } = {}) {
   update(0);
 
   // GLB: подмена процедурного визуала, если модель есть
-  getGLB(id).then((src) => {
+  if (glb) getGLB(id).then((src) => {
     if (!src) return;
     const obj = src.clone(true);
     obj.position.copy(GRIP);           // (0,0,0) модели — центр рукояти

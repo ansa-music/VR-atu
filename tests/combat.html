@@ -132,7 +132,7 @@
     // ---------- оружие: рукоять в начале координат держателя ----------
     const holder = new THREE.Group();
     const guns = W.FANTASY_WEAPONS.map((d) => {
-      const g = createFantasyGun(d.id, { color: d.color, quality });
+      const g = createFantasyGun(d.id, { color: d.color, quality, glb: params.get('glb') !== '0' });
       g.group.position.copy(GRIP).negate();
       g.group.visible = false;
       holder.add(g.group);
