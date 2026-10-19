@@ -38,7 +38,7 @@ export function createMelee({ minSpeed = 2, fullSpeed = 7, waveSpeed = 6, waveCo
   const melee = {
     tipSpeed: 0,
     wave: null,                             // { origin, dir, up, power } в кадр сильного взмаха
-    segment: { from: prevTip, to: new THREE.Vector3() }, // путь кончика за кадр (для разрубания снарядов)
+    segment: { from: new THREE.Vector3(), to: new THREE.Vector3() }, // путь кончика за кадр (для разрубания снарядов)
 
     // blade — модель клинка (tip, base | group), hand — не обязательна, hittables — Mesh[]/InstancedMesh[]
     // → [{ object, instanceId, point, strength 0..1, dir }] (массив и объекты переиспользуются)
@@ -52,13 +52,14 @@ export function createMelee({ minSpeed = 2, fullSpeed = 7, waveSpeed = 6, waveCo
 
       worldPos(blade.tip, _tip);
       worldPos(blade.base || blade.group, _base);
-      if (!has) { prevTip.copy(_tip); prevBase.copy(_base); melee.segment.to.copy(_tip); has = true; return hits; }
+      if (!has) { prevTip.copy(_tip); prevBase.copy(_base); melee.segment.from.copy(_tip); melee.segment.to.copy(_tip); has = true; return hits; }
 
       _dir.subVectors(_tip, prevTip);
       const step = _dir.length();
       const inst = step / dt;
       vel.lerp(_dir.divideScalar(dt), Math.min(1, dt * 30));
       melee.tipSpeed = inst;
+      melee.segment.from.copy(prevTip);
       melee.segment.to.copy(_tip);
       const strength = Math.max(0, Math.min(1, (inst - minSpeed) / (fullSpeed - minSpeed)));
 

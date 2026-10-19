@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Арена магов — тест боя</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0a1c; color: #e8e2ff; font: 14px/1.35 system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; }
+    #hud { position: fixed; left: 12px; top: 12px; width: 300px; padding: 10px 12px; background: rgba(20, 14, 44, .78); border: 1px solid #5b4aa8; border-radius: 10px; }
+    #hud h1 { margin: 0 0 6px; font-size: 15px; color: #ffd98a; letter-spacing: .5px; }
+    #hud .row { display: flex; justify-content: space-between; gap: 8px; }
+    .bar { height: 8px; background: #2a2150; border-radius: 4px; overflow: hidden; margin: 3px 0 6px; }
+    .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #4fb8ff, #b48cff); }
+    #charge > i { background: linear-gradient(90deg, #ffe27a, #fff6d0); }
+    #hpbar > i { background: linear-gradient(90deg, #ff4f6a, #ff9a6a); }
+    #btns { position: fixed; right: 12px; top: 12px; width: 230px; display: flex; flex-wrap: wrap; gap: 6px; }
+    #btns button { flex: 1 1 45%; padding: 6px 4px; background: #2b2160; color: #f0eaff; border: 1px solid #6a58c8; border-radius: 7px; cursor: pointer; font: inherit; font-size: 12px; }
+    #btns button:hover { background: #3c2f86; }
+    #btns .wide { flex-basis: 100%; }
+    #help { position: fixed; left: 12px; bottom: 12px; max-width: 560px; color: #b9b0e6; font-size: 12px; background: rgba(20,14,44,.6); padding: 8px 10px; border-radius: 8px; }
+    #hurt { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 50%, rgba(255,30,60,.55)); opacity: 0; transition: opacity .25s; }
+    #cross { position: fixed; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; background: #fff7; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../vendor/three.module.js",
+        "three/addons/": "../vendor/addons/",
+        "iwer": "https://cdn.jsdelivr.net/npm/iwer@2.4.0/build/iwer.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <h1>Арена магов · тест боя</h1>
+    <div class="row"><b id="wname">—</b><span id="wmode"></span></div>
+    <div class="row"><span>Мана</span><span id="manaTxt"></span></div>
+    <div class="bar" id="mana"><i></i></div>
+    <div class="row"><span>Заряд / натяжение</span><span id="chargeTxt"></span></div>
+    <div class="bar" id="charge"><i></i></div>
+    <div class="row"><span>Здоровье</span><span id="hpTxt"></span></div>
+    <div class="bar" id="hpbar"><i></i></div>
+    <div class="row"><span>Очки</span><b id="score">0</b></div>
+    <div class="row"><span id="modeTxt">Режим не запущен</span><span id="waveTxt"></span></div>
+    <div class="row"><span>Врагов: <b id="foes">0</b></span><span id="slow"></span></div>
+    <div class="row"><span>FPS <b id="fps">0</b></span><span>вызовов <b id="calls">0</b></span></div>
+  </div>
+  <div id="btns">
+    <button data-mode="trial" class="wide">Испытание духов</button>
+    <button data-mode="waves">Волны</button>
+    <button data-mode="boss">Дуэль с боссом</button>
+    <button data-stop class="wide">Стоп / очистить</button>
+    <button data-spawn="wisp">Огонёк</button>
+    <button data-spawn="fairy">Фея</button>
+    <button data-spawn="skull">Череп</button>
+    <button data-spawn="guardian">Страж</button>
+    <button data-spawn="eye">Глаз</button>
+    <button data-spawn="boss">Колосс</button>
+  </div>
+  <div id="help">
+    <b>ПК:</b> мышь с зажатой правой кнопкой — обзор; ЛКМ — огонь (жезл: удержание — заряд; лук: удержание — натяжение; клинок — взмах);
+    1–5 — оружие; E — стихия посоха; R — кристалл маны; T — ускорение восприятия (мир ×0.25).<br>
+    <b>VR:</b> правый курок — огонь/взмах; B — стихия; A / Y — оружие; левый хват — кристалл маны; лук: левой рукой взять тетиву (курок или хват) и тянуть;
+    нажатие правого стика — замедление; X — следующий режим. <code>?xr</code> — эмулятор Quest 3 (window.xrTest), <code>?quality=low</code>.
+  </div>
+  <div id="hurt"></div>
+  <div id="cross"></div>
+
+  <script type="module">
+    const params = new URLSearchParams(location.search);
+    // эмулятор шлема ставится до VRButton
+    if (params.has('xr')) {
+      try { await import('./combat-xr.js'); }
+      catch (e) { console.error('[combat] Не удалось загрузить IWER (эмулятор Quest 3) с CDN', e); }
+    }
+
+    const THREE = await import('three');
+    const { VRButton } = await import('three/addons/webxr/VRButton.js');
+    const { detectQuality } = await import('../js/quality.js');
+    const { createBallistics } = await import('../js/ballistics.js');
+    const { createFx } = await import('../js/fx.js');
+    const { GRIP } = await import('../js/weapon.js');
+    const { sampleSpread, toRad } = await import('../js/arsenal.js');
+    const W = await import('../js/fantasy/weapons.js');
+    const { createFantasyGun } = await import('../js/fantasy/models.js');
+    const { createBowController } = await import('../js/fantasy/bow.js');
+    const { createMelee, createSlashWaves } = await import('../js/fantasy/melee.js');
+    const { createEnemies } = await import('../js/fantasy/enemies.js');
+    const { createWaveDirector, MODES } = await import('../js/fantasy/waves.js');
+
+    const quality = detectQuality();
+    const low = quality.id === 'low';
+
+    // ---------- сцена ----------
+    const renderer = new THREE.WebGLRenderer({ antialias: !low, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, quality.pixelRatio));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType('local-floor');
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(VRButton.createButton(renderer));
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x150f2e);
+    scene.fog = new THREE.Fog(0x150f2e, 25, 70);
+    scene.add(new THREE.HemisphereLight(0xb7a8ff, 0x2a1d3a, 1.4));
+    const sun = new THREE.DirectionalLight(0xffe2c0, 1.6); sun.position.set(4, 10, 3); scene.add(sun);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 48).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x3a3352, roughness: 0.9 }));
+    scene.add(floor);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(10.85, 11, 96).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x9a7bff, toneMapped: false }));
+    ring.position.y = 0.01; scene.add(ring);
+
+    const rig = new THREE.Group(); scene.add(rig);
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
+    camera.position.set(0, 1.6, 0); rig.add(camera);
+
+    const ballistics = createBallistics(scene);
+    const fx = createFx(scene, { maxParticles: quality.maxParticles });
+    const enemies = createEnemies(scene, { quality });
+    const director = createWaveDirector(enemies);
+    const slashes = createSlashWaves(scene, { quality });
+    const melee = createMelee();
+    const bowCtl = createBowController();
+    const arsenal = W.createFantasyArsenal();
+
+    // ---------- оружие: рукоять в начале координат держателя ----------
+    const holder = new THREE.Group();
+    const guns = W.FANTASY_WEAPONS.map((d) => {
+      const g = createFantasyGun(d.id, { color: d.color, quality });
+      g.group.position.copy(GRIP).negate();
+      g.group.visible = false;
+      holder.add(g.group);
+      return g;
+    });
+    const deskPose = new THREE.Vector3(0.24, -0.26, -0.42);
+    camera.add(holder); holder.position.copy(deskPose);
+
+    // левая рука (VR — контроллер, ПК — условная точка) для тетивы
+    const leftMarker = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), new THREE.MeshBasicMaterial({ color: 0x9dffcf, toneMapped: false }));
+    const drawHand = new THREE.Vector3();
+
+    // ---------- VR-контроллеры ----------
+    const hands = { left: null, right: null };
+    for (let i = 0; i < 2; i++) {
+      const grip = renderer.xr.getControllerGrip(i);
+      rig.add(grip);
+      grip.addEventListener('connected', (e) => {
+        const side = e.data.handedness === 'left' ? 'left' : 'right';
+        hands[side] = { grip, source: e.data, prev: [], held: [] };
+        if (side === 'right') { grip.add(holder); holder.position.set(0, 0, 0); holder.rotation.set(-0.35, 0, 0); }
+        else grip.add(leftMarker);
+      });
+      grip.addEventListener('disconnected', () => {
+        for (const s of ['left', 'right']) if (hands[s]?.grip === grip) hands[s] = null;
+      });
+    }
+    renderer.xr.addEventListener('sessionstart', () => dispatchEvent(new CustomEvent('game:xr', { detail: { active: true } })));
+    renderer.xr.addEventListener('sessionend', () => {
+      camera.add(holder); holder.position.copy(deskPose); holder.rotation.set(0, 0, 0);
+      dispatchEvent(new CustomEvent('game:xr', { detail: { active: false } }));
+    });
+    // кнопки геймпада: 0 курок, 1 хват, 3 стик, 4 A/X, 5 B/Y
+    function btn(side, i) { const h = hands[side]; return !!h?.source.gamepad?.buttons[i]?.pressed; }
+    function edge(side, i) { const h = hands[side]; return h ? btn(side, i) && !h.prev[i] : false; }
+    function latchButtons() {
+      for (const s of ['left', 'right']) {
+        const h = hands[s]; const b = h?.source.gamepad?.buttons; if (!b) continue;
+        for (let i = 0; i < b.length; i++) h.prev[i] = b[i].pressed;
+      }
+    }
+
+    // ---------- ввод на ПК ----------
+    const input = { fire: false, firePrev: false, yaw: 0, pitch: 0, look: false, bowT: 0, swingT: -1 };
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    renderer.domElement.addEventListener('mousedown', (e) => { if (e.button === 0) input.fire = true; if (e.button === 2) input.look = true; });
+    addEventListener('mouseup', (e) => { if (e.button === 0) input.fire = false; if (e.button === 2) input.look = false; });
+    addEventListener('mousemove', (e) => {
+      if (!input.look) return;
+      input.yaw -= e.movementX * 0.0035;
+      input.pitch = Math.max(-1.4, Math.min(1.4, input.pitch - e.movementY * 0.0035));
+    });
+    addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      const n = +e.key; if (n >= 1 && n <= 5) selectWeapon(n - 1);
+      if (e.code === 'KeyE') switchElement();
+      if (e.code === 'KeyR') useCrystal();
+      if (e.code === 'KeyT') slowmo();
+    });
+    addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+    for (const b of document.querySelectorAll('#btns button')) {
+      b.onclick = () => {
+        if (b.dataset.mode) startMode(b.dataset.mode);
+        else if (b.dataset.spawn) enemies.spawn(b.dataset.spawn);
+        else { director.stop(); enemies.clear(); }
+      };
+    }
+
+    // ---------- состояние ----------
+    let score = 0, timeScale = 1, slowLeft = 0, hurt = 0, modeIdx = -1;
+    function selectWeapon(i) { if (arsenal.select(i)) { melee.reset(); bowCtl.cancel(); } }
+    function switchElement() { const el = W.nextElement(arsenal.current); if (el) guns[1].setElement?.(el); }
+    function useCrystal() { arsenal.current.manualMagSwap(); }
+    function slowmo() { slowLeft = slowLeft > 0 ? 0 : 4; }
+    function startMode(m) { score = 0; director.start(m); modeIdx = MODES.findIndex((x) => x.id === m); }
+
+    // ---------- выстрелы ----------
+    const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _u = new THREE.Vector3(), _r = new THREE.Vector3(), _q = new THREE.Quaternion();
+    const shotPool = []; let shotNext = 0;
+    for (let i = 0; i < 96; i++) shotPool.push({ damage: 1, element: null, radius: 0, color: 0xffffff });
+
+    function muzzleRay(g) {
+      g.muzzle.getWorldPosition(_o);
+      g.group.getWorldQuaternion(_q);
+      _d.set(0, 0, -1).applyQuaternion(_q);
+      return _o;
+    }
+    function launch(origin, dir, p, halfDeg) {
+      if (halfDeg > 0) {
+        const [a, b] = sampleSpread(halfDeg);
+        _u.set(0, 1, 0); _r.crossVectors(dir, _u).normalize(); _u.crossVectors(_r, dir).normalize();
+        dir.addScaledVector(_r, a).addScaledVector(_u, b).normalize();
+      }
+      const s = shotPool[shotNext]; shotNext = (shotNext + 1) % shotPool.length;
+      s.damage = p.damage; s.element = p.element; s.radius = p.radius; s.color = p.color;
+      ballistics.fire({ origin, dir, speed: p.speed, drag: p.drag, gravity: p.gravity, color: p.color,
+        bolt: p.bolt, tracer: !p.bolt, penetration: p.penetration, maxRange: p.maxRange, shot: s });
+      enemies.threat(origin, dir);
+    }
+    function fireWeapon(w, r) {
+      const g = guns[arsenal.index];
+      muzzleRay(g);
+      launch(_o, _d, W.shotParams(w, r), w.spread({ aim: 0.6 }));
+      g.fire();
+    }
+
+    // попадания снарядов: враги (InstancedMesh) и огненные шары
+    const ray = new THREE.Raycaster();
+    const found = [];
+    const hitRes = { distance: 0, point: new THREE.Vector3(), object: null, instanceId: undefined, kind: '', projectile: null };
+    const _to = new THREE.Vector3();
+    function hitTest(from, dir, maxDist, exclude) {
+      let best = null;
+      ray.set(from, dir); ray.far = maxDist;
+      found.length = 0;
+      ray.intersectObjects(enemies.meshes, false, found);
+      for (const f of found) {
+        if (exclude.has(f.object) || !f.object.visible) continue;
+        hitRes.distance = f.distance; hitRes.point.copy(f.point); hitRes.object = f.object;
+        hitRes.instanceId = f.instanceId; hitRes.kind = 'enemy'; hitRes.projectile = null;
+        best = hitRes; break;
+      }
+      _to.copy(from).addScaledVector(dir, maxDist);
+      const ph = enemies.projectiles.hitTest(from, _to, 0.08);
+      if (ph && (!best || ph.distance < best.distance)) {
+        hitRes.distance = ph.distance; hitRes.point.copy(ph.point); hitRes.object = null;
+        hitRes.instanceId = undefined; hitRes.kind = 'fireball'; hitRes.projectile = ph.projectile;
+        best = hitRes;
+      }
+      return best;
+    }
+    function onBulletHit(shot, hit) {
+      if (!shot) return false;
+      if (hit.kind === 'fireball') {
+        enemies.projectiles.destroy(hit.projectile);
+        fx.burst(hit.point, 0xffa040, 10);
+        return false;
+      }
+      if (hit.object) applyHit(hit.object, hit.point, shot.damage, shot.element, hit.instanceId);
+      if (shot.radius > 0) explode(hit.point, shot.radius, shot.damage * 0.6, shot.element);
+      return true;
+    }
+    function explode(point, radius, damage, element) {
+      fx.shockwave?.(point, 0xffe27a);
+      const res = enemies.explode?.(point, radius, { damage, element });
+      if (res) for (const r of res) scoreHit(r, r.position || point);
+    }
+    function applyHit(mesh, point, damage, element, instanceId) {
+      const r = enemies.hit(mesh, point, { damage, element, instanceId });
+      if (r) scoreHit(r, point);
+      return r;
+    }
+    const COLORS = { wisp: 0xbfefff, fairy: 0xffd34a, skull: 0xb05cff, guardian: 0x7fd8ff, eye: 0xff8a3a, boss: 0xff5a1f };
+    function scoreHit(r, point) {
+      if (r.blocked) { fx.burst(point, 0x9a9aa8, 5); return; }
+      if (!r.killed) { fx.burst(point, 0xffffff, 4); return; }
+      score += r.points;
+      fx.burst(point, COLORS[r.type] ?? 0xffffff, 18);
+      fx.popup(point, (r.points > 0 ? '+' : '') + r.points + (r.weakPoint ? ' руна!' : ''), r.points < 0 ? '#ff5a7a' : '#ffe27a');
+    }
+
+    // ---------- кадр ----------
+    const clock = new THREE.Clock();
+    const _head = new THREE.Vector3(), _hdir = new THREE.Vector3();
+    const _bowRest = new THREE.Vector3(), _back = new THREE.Vector3();
+    let fpsT = 0, fpsN = 0, fps = 0;
+
+    function frame() {
+      const dt = Math.min(0.05, clock.getDelta());
+      const xr = renderer.xr.isPresenting;
+      // замедление времени: мир ×0.25, игрок и его снаряды — как обычно
+      slowLeft = Math.max(0, slowLeft - dt);
+      timeScale = slowLeft > 0 ? 0.25 : 1;
+
+      if (!xr) { rig.rotation.y = input.yaw; camera.rotation.set(input.pitch, 0, 0); }
+      camera.getWorldPosition(_head); camera.getWorldDirection(_hdir);
+
+      // ввод
+      let trig, trigPrev, drawing;
+      if (xr) {
+        trig = btn('right', 0); trigPrev = !!hands.right?.prev[0];
+        if (edge('right', 5)) switchElement();
+        if (edge('right', 4)) arsenal.step(1);
+        if (edge('left', 5)) arsenal.step(-1);
+        if (edge('right', 3)) slowmo();
+        if (edge('left', 4)) startMode(MODES[(modeIdx + 1) % MODES.length].id);
+        drawing = btn('left', 0) || btn('left', 1);
+        if (edge('left', 1) && arsenal.current.def.action !== 'bow') useCrystal();
+        if (hands.left) leftMarker.getWorldPosition(drawHand);
+      } else {
+        trig = input.fire; trigPrev = input.firePrev; input.firePrev = input.fire;
+        drawing = false;
+      }
+      const pressed = trig && !trigPrev, released = !trig && trigPrev;
+
+      arsenal.update(dt);
+      for (const e of arsenal.drain()) if (e.type === 'draw') melee.reset();
+      guns.forEach((g, i) => { g.group.visible = i === arsenal.index; });
+      const w = arsenal.current, def = w.def, g = guns[arsenal.index];
+      holder.position.y = (xr ? 0 : deskPose.y) - arsenal.lowered * 0.3;
+
+      if (arsenal.ready) {
+        if (def.action === 'mana') {
+          if (trig) { const r = w.pull(pressed); if (r?.shot) fireWeapon(w, r); }
+          if (released) { const r = w.release(); if (r?.shot) fireWeapon(w, r); }
+        } else if (def.action === 'bow') {
+          if (!xr) {
+            // ПК: удержание ЛКМ — свободная рука тянет тетиву назад
+            g.group.updateWorldMatrix(true, false);
+            if (!g.string.userData.restLocal) g.string.userData.restLocal = g.string.position.clone();
+            _bowRest.copy(g.string.userData.restLocal).applyMatrix4(g.group.matrixWorld);
+            _back.set(0, 0, 1).transformDirection(g.group.matrixWorld);
+            input.bowT = trig ? Math.min(0.8, input.bowT + dt) : 0;
+            drawHand.copy(_bowRest).addScaledVector(_back, def.draw.length * input.bowT / 0.8);
+            drawing = trig;
+          }
+          const rel = bowCtl.update(dt, { bow: g, drawHand, drawing });
+          if (rel) {
+            const r = W.bowRelease(w, rel.power);
+            if (r) { _d.copy(rel.dir); launch(_o.copy(rel.origin), _d, W.shotParams(w, r, rel.power), w.spread({ aim: 1 })); g.fire(); }
+          }
+        } else if (def.action === 'melee') {
+          if (!xr) {
+            // ПК: взмах клинком по нажатию
+            if (pressed && input.swingT < 0) input.swingT = 0;
+            if (input.swingT >= 0) {
+              input.swingT += dt;
+              const k = Math.min(1, input.swingT / 0.2);
+              holder.rotation.set(-0.2, 1.1 - 2.2 * k * k * (3 - 2 * k), -0.4);
+              if (input.swingT > 0.45) { input.swingT = -1; holder.rotation.set(0, 0, 0); }
+            }
+          }
+          const hits = melee.update(dt, { blade: g, hittables: enemies.meshes });
+          for (const h of hits) applyHit(h.object, h.point, def.swing.damage * (0.5 + h.strength), null, h.instanceId);
+          if (melee.wave && W.bladeWave(w, melee.wave.power)) slashes.spawn(melee.wave, def.wave);
+          if (melee.tipSpeed > def.swing.minSpeed) {
+            const ph = enemies.projectiles.hitTest(melee.segment.from, melee.segment.to, 0.12);
+            if (ph) { enemies.projectiles.deflect(ph.projectile, _hdir); fx.burst(ph.point, 0x7fd8ff, 12); }
+          }
+        }
+      }
+      g.update(dt, { mana01: w.mana01, charge01: w.charge01 ?? 0, element: w.element, draw01: bowCtl.draw01 });
+
+      // мир
+      const evs = enemies.update(dt, { headPos: _head, headDir: _hdir, timeScale });
+      for (const e of evs) {
+        if (e.type === 'player-hit') { director.damagePlayer(e.damage ?? 1); hurt = 0.35; }
+        else if (e.type === 'killed' || e.type === 'projectile-hit') { if (e.points && (e.killed ?? true)) { score += e.points; if (e.position) fx.popup(e.position, (e.points > 0 ? '+' : '') + e.points, '#ffe27a'); } }
+        else if (e.type === 'burst' && e.position) fx.burst(e.position, e.color ?? 0xffa040, 12);
+        else if (e.type === 'chain') fx.tracer(e.from, e.to, 0xd8a0ff);
+      }
+      for (const e of director.update(dt, { timeScale })) {
+        _u.copy(_head).addScaledVector(_hdir, 3);
+        fx.banner(_u, e.label, e.type === 'defeat' ? '#ff5a7a' : '#ffe27a');
+      }
+      slashes.update(dt, { hittables: enemies.meshes, onHit: (h) => applyHit(h.object, h.point, h.damage, null, h.instanceId) });
+      ballistics.update(dt, hitTest, onBulletHit);
+      fx.update(dt);
+
+      hurt = Math.max(0, hurt - dt);
+      latchButtons();
+      renderer.render(scene, camera);
+
+      // интерфейс
+      fpsN++; fpsT += dt;
+      if (fpsT >= 0.5) { fps = Math.round(fpsN / fpsT); fpsN = 0; fpsT = 0; updateHud(); }
+      document.getElementById('hurt').style.opacity = hurt > 0 ? 1 : 0;
+    }
+    const $ = (id) => document.getElementById(id);
+    function updateHud() {
+      const w = arsenal.current;
+      $('wname').textContent = w.def.name;
+      $('wmode').textContent = w.def.elements ? W.ELEMENTS[w.mode].name : '';
+      $('manaTxt').textContent = Math.round(w.mana) + ' / ' + w.def.manaMax;
+      $('mana').firstChild.style.width = (w.mana01 * 100) + '%';
+      const c = w.def.action === 'bow' ? bowCtl.draw01 : (w.charge01 ?? 0);
+      $('charge').firstChild.style.width = (c * 100) + '%';
+      $('chargeTxt').textContent = Math.round(c * 100) + '%';
+      $('hpTxt').textContent = director.hp + ' / ' + director.maxHp;
+      $('hpbar').firstChild.style.width = (director.hp / director.maxHp * 100) + '%';
+      $('score').textContent = score;
+      $('modeTxt').textContent = director.running ? director.label : (director.mode ? director.label + ' — конец' : 'Режим не запущен');
+      $('waveTxt').textContent = director.mode === 'trial' ? Math.ceil(director.timeLeft) + ' с' : director.mode === 'waves' ? 'волна ' + director.wave : '';
+      $('foes').textContent = enemies.count;
+      $('slow').textContent = timeScale < 1 ? 'ЗАМЕДЛЕНИЕ' : '';
+      $('fps').textContent = fps;
+      $('calls').textContent = renderer.info.render.calls;
+    }
+    renderer.setAnimationLoop(frame);
+
+    // ---------- отладка: window.combatTest ----------
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.combatTest = {
+      THREE, scene, camera, renderer, arsenal, guns, enemies, director, melee, bowCtl, slashes, quality,
+      select: (i) => selectWeapon(i),
+      element: () => switchElement(),
+      crystal: () => useCrystal(),
+      slowmo: (on = true) => { slowLeft = on ? 4 : 0; },
+      start: (m) => startMode(m),
+      spawn: (type, x, y, z) => enemies.spawn(type, x === undefined ? undefined : new THREE.Vector3(x, y, z)),
+      look: (yawDeg = 0, pitchDeg = 0) => { input.yaw = yawDeg * Math.PI / 180; input.pitch = pitchDeg * Math.PI / 180; },
+      async fire(ms = 60) { input.fire = true; await wait(ms); input.fire = false; await wait(50); },
+      state: () => ({
+        weapon: arsenal.current.def.id, ready: arsenal.ready, mana: Math.round(arsenal.current.mana), element: arsenal.current.element,
+        charge01: arsenal.current.charge01, draw01: bowCtl.draw01, score, hp: director.hp, mode: director.mode, running: director.running,
+        wave: director.wave, enemies: enemies.count, projectiles: enemies.projectiles.list.filter?.((p) => p.alive !== false).length,
+        bullets: ballistics.count, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, fps, timeScale, xr: renderer.xr.isPresenting,
+      }),
+    };
+    console.info('[combat] готово: window.combatTest', quality.id);
+  </script>
+</body>
+</html>
