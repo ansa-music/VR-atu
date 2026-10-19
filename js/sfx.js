@@ -693,3 +693,28 @@ export function setVolumes({ music: m, sfx: s } = {}) {
     if (musicGain) rampTo(musicGain.gain, MUSIC_VOL * volMusic, t); // во время stop() musicGain уже null
   } catch (e) { /* звук не должен ломать игру */ }
 }
+
+// ---------- Общий доступ для js/fantasy/audio.js ----------
+
+// Текущая громкость музыки: MUSIC_VOL × «музыка» из setVolumes
+export function musicVolume() {
+  return MUSIC_VOL * volMusic;
+}
+
+// Общий кэшированный буфер белого шума (null — нет Web Audio)
+export function noiseBuffer() {
+  try {
+    const c = ac();
+    return c ? getNoiseBuf(c) : null;
+  } catch (e) { return null; }
+}
+
+// Общий контекст и шины (контекст создаётся лениво через ac()):
+// эффекты → sfxBus, музыка → master с громкостью musicVolume()
+export function audioCore() {
+  try {
+    const c = ac();
+    if (!c) return null;
+    return { ctx: c, master, sfxBus, musicVolume, noise: getNoiseBuf(c) };
+  } catch (e) { return null; }
+}

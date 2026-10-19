@@ -1,0 +1,181 @@
+{
+  "checks": "GLB headers, embedded buffers and PNG, accessors, finite geometry, normalized normals, UVs, nondegenerate triangles, budgets, material and texture count, named nodes, no skins or animations",
+  "runtime_test": "Not tested on Meta Quest or in a WebXR runtime; this is a local structural check, not the Khronos validator.",
+  "results": [
+    {
+      "file": "blade.glb",
+      "status": "PASS",
+      "triangles": 724,
+      "triangle_limit": 5000,
+      "bytes": 1070816,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "Tip"
+      ]
+    },
+    {
+      "file": "boss.glb",
+      "status": "PASS",
+      "triangles": 1384,
+      "triangle_limit": 12000,
+      "bytes": 1149984,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "WeakPoint"
+      ]
+    },
+    {
+      "file": "bow.glb",
+      "status": "PASS",
+      "triangles": 660,
+      "triangle_limit": 5000,
+      "bytes": 1063156,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "String"
+      ]
+    },
+    {
+      "file": "eye.glb",
+      "status": "PASS",
+      "triangles": 580,
+      "triangle_limit": 3000,
+      "bytes": 1053528,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": []
+    },
+    {
+      "file": "fairy.glb",
+      "status": "PASS",
+      "triangles": 348,
+      "triangle_limit": 3000,
+      "bytes": 295104,
+      "degenerate_triangles": 0,
+      "texture_px": 512,
+      "required_nodes": []
+    },
+    {
+      "file": "gauntlet.glb",
+      "status": "PASS",
+      "triangles": 436,
+      "triangle_limit": 5000,
+      "bytes": 1036220,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "Muzzle"
+      ]
+    },
+    {
+      "file": "guardian.glb",
+      "status": "PASS",
+      "triangles": 1260,
+      "triangle_limit": 3000,
+      "bytes": 1135112,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "WeakPoint"
+      ]
+    },
+    {
+      "file": "mana-crystal.glb",
+      "status": "PASS",
+      "triangles": 108,
+      "triangle_limit": 2000,
+      "bytes": 266412,
+      "degenerate_triangles": 0,
+      "texture_px": 512,
+      "required_nodes": []
+    },
+    {
+      "file": "obelisk.glb",
+      "status": "PASS",
+      "triangles": 362,
+      "triangle_limit": 2000,
+      "bytes": 1027228,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": []
+    },
+    {
+      "file": "platform.glb",
+      "status": "PASS",
+      "triangles": 628,
+      "triangle_limit": 2000,
+      "bytes": 1059280,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": []
+    },
+    {
+      "file": "rune-target.glb",
+      "status": "PASS",
+      "triangles": 600,
+      "triangle_limit": 2000,
+      "bytes": 325304,
+      "degenerate_triangles": 0,
+      "texture_px": 512,
+      "required_nodes": []
+    },
+    {
+      "file": "seal.glb",
+      "status": "PASS",
+      "triangles": 512,
+      "triangle_limit": 2000,
+      "bytes": 1045228,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": []
+    },
+    {
+      "file": "skull.glb",
+      "status": "PASS",
+      "triangles": 544,
+      "triangle_limit": 3000,
+      "bytes": 318612,
+      "degenerate_triangles": 0,
+      "texture_px": 512,
+      "required_nodes": []
+    },
+    {
+      "file": "staff.glb",
+      "status": "PASS",
+      "triangles": 944,
+      "triangle_limit": 5000,
+      "bytes": 1097196,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "Muzzle",
+        "Crystal"
+      ]
+    },
+    {
+      "file": "wand.glb",
+      "status": "PASS",
+      "triangles": 620,
+      "triangle_limit": 5000,
+      "bytes": 1058364,
+      "degenerate_triangles": 0,
+      "texture_px": 1024,
+      "required_nodes": [
+        "Muzzle"
+      ]
+    },
+    {
+      "file": "wisp.glb",
+      "status": "PASS",
+      "triangles": 288,
+      "triangle_limit": 3000,
+      "bytes": 287936,
+      "degenerate_triangles": 0,
+      "texture_px": 512,
+      "required_nodes": []
+    }
+  ]
+}
