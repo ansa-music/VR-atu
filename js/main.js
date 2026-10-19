@@ -479,9 +479,9 @@ function hitTarget(t, point, controller) {
     hud?.hitMarker('bomb');
   } else {
     const m = addCombo(point, controller);
-    const pts = Math.round((u.type === 'gold' ? 3 : 1) * m * (fantasy ? skills?.powerMul || 1 : 1));
+    const pts = Math.round((u.type === 'gold' ? 3 : 1) * m * (fantasy ? skills?.power || 1 : 1));
     score += pts;
-    if (fantasy) skills?.addUlt?.(u.type === 'gold' ? 0.08 : 0.04);
+    if (fantasy) skills?.addCharge?.(u.type === 'gold' ? 3 : 1);
     fx.burst(point, u.color, u.type === 'gold' ? 26 : 16);
     fx.shockwave?.(point, u.color);
     fx.popup(point, '+' + pts, u.type === 'gold' ? '#ffd23f' : '#ffffff');
@@ -951,8 +951,15 @@ const controllers = [0, 1].map((i) => {
     dot.visible = false;
     if (weaponHand === c) weaponHand = controllers.find((k) => k !== c && k.userData.src) || null;
   });
-  c.addEventListener('selectstart', () => { c.userData.trigHeld = true; c.userData.trigFirst = true; });
-  c.addEventListener('selectend', () => { c.userData.trigHeld = false; });
+  c.addEventListener('selectstart', () => {
+    // фэнтези: курок свободной руки рисует руну, у руки с оружием — ульта
+    if (fantasy && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
+    c.userData.trigHeld = true; c.userData.trigFirst = true;
+  });
+  c.addEventListener('selectend', () => {
+    c.userData.trigHeld = false;
+    if (c.userData.skillTrig) { c.userData.skillTrig = false; skills?.onTrigger?.(c, false); }
+  });
   c.addEventListener('squeezestart', () => onSqueeze(c, true));
   c.addEventListener('squeezeend', () => onSqueeze(c, false));
   rig.add(c);
@@ -988,6 +995,7 @@ function onSqueeze(c, down) {
   const u = c.userData;
   u.gripHeld = down;
   if (!down) {
+    if (u.skill) { u.skill = false; skills?.onSqueeze?.(c, false); }
     if (u.grabbed) { handling?.release?.(c); u.grabbed = null; }
     if (c === weaponHand) vrAim = false;
     return;
@@ -1000,11 +1008,16 @@ function onSqueeze(c, down) {
     u.grabbed = 'holster';
     return;
   }
+  if (c !== weaponHand && fantasy) {
+    // ладонь вверх — энергосфера, ладонь вперёд — барьер; иначе перезарядка кнопкой
+    if (skills?.onSqueeze?.(c, true)) u.skill = true;
+    else arsenal.current.startReload();
+    return;
+  }
   if (c !== weaponHand) {
     const what = handling?.grab?.(c, { gun: handGun(weaponHand), weaponHand, weapon: arsenal.current });
     if (what === 'pouch' && userSettings.vrReload === 'button') handling.release(c);
     else if (what) { u.grabbed = what; return; }
-    if (fantasy && (gestureState?.palmUp || gestureState?.palmForward)) return; // энергосфера или барьер
     if (userSettings.vrReload !== 'hands') arsenal.current.startReload();
     return;
   }
@@ -1017,7 +1030,7 @@ function updateVrHands(dt) {
   if (!handling) return;
   const events = handling.update(dt, {
     gun: handGun(weaponHand), weaponHand, offHand: offHand(), weapon: arsenal.current,
-    enabled: arsenal.ready, leftHanded: !!userSettings.leftHanded,
+    enabled: arsenal.ready && !fantasy, leftHanded: !!userSettings.leftHanded,
   });
   for (const e of events || []) {
     if (e.type === 'mag-inserted' || e.type === 'shell-inserted' || e.type === 'racked') vibrate(weaponHand, 0.4, 40);
@@ -1104,7 +1117,7 @@ function pollVrButtons() {
     const prev = c.userData.prevButtons;
     const pressed = (i) => !!b[i]?.pressed && !prev[i];
     if (src.handedness === 'right') {
-      if (pressed(4)) { jumpRequested = true; aPressedEdge = true; }
+      if (pressed(4)) jumpRequested = true;
       if (pressed(5)) arsenal.step(1);
       if (pressed(3)) arsenal.current.toggleMode();
     } else if (src.handedness === 'left') {
@@ -1202,8 +1215,7 @@ function updateMovement(dt) {
       const axes = src?.gamepad?.axes;
       if (!axes || axes.length < 4) continue;
       const sx = axes[2], sy = axes[3];
-      if (src.handedness === 'left') { leftStick.x = sx; leftStick.y = sy; }
-      if (src.handedness === 'left' && !fantasy) {
+      if (src.handedness === 'left' && !(fantasy && skills?.flashAiming)) {
         if (Math.abs(sx) > 0.15) move.x += sx;
         if (Math.abs(sy) > 0.15) move.y -= sy;
       } else if (src.handedness === 'right') {
@@ -1282,6 +1294,8 @@ function updateMovement(dt) {
     vy = Math.sqrt(2 * MOVE.gravity * MOVE.jump);
     onGround = false;
     sound('jump');
+  } else if (jumpRequested && fantasy) {
+    skills?.onJump?.(true, tmpV.set(headPos.x, groundY + feet, headPos.z));
   }
   jumpRequested = false;
   if (!onGround) {
@@ -1549,9 +1563,7 @@ const fantasyWorld = safeCall(fworldMod.createFantasyWorld, scene, { quality });
 const fantasyBoard = safeCall(fuiMod.createFantasyBoard);
 const fantasyMenu = safeCall(fuiMod.createFantasyMenu);
 const bracer = safeCall(fbracerMod.createBracer);
-const gestures = safeCall(gesturesMod.createGestures, { scene });
 const playSpell = (name, opts) => { try { return faudioMod.playSpell?.(name, opts) ?? null; } catch { return null; } };
-const skills = safeCall(skillsMod.createSkills, { scene, camera, rig, quality, playSpell, fx });
 const fantasyAvailable = !!(fantasyWorld && fantasyBoard && fantasyMenu);
 const runeSet = new Set(fantasyWorld?.runes?.meshes || []);
 if (fantasyBoard) { fantasyBoard.mesh.visible = false; fantasyBoard.mesh.position.copy(classicBoard.mesh.position); scene.add(fantasyBoard.mesh); }
@@ -1563,16 +1575,10 @@ if (fantasyMenu) {
   fantasyMenu.showStart(ROUND_TIME, 'fantasy');
 }
 if (bracer?.group) bracer.group.visible = false;
-skills?.setVisible?.(false);
 
 let fantasy = false;      // сейчас идёт фэнтези-режим
 let groundY = 0;          // высота опоры под ногами: пол острова или верх платформы
 let hitstopT = 0;         // стоп-кадр: мир замирает на долю секунды
-let aPressedEdge = false; // кнопка A нажата в этом кадре (небесный шаг в прыжке)
-let wasDrawing = false;
-let gestureState = null;
-const leftStick = { x: 0, y: 0 };
-const headQuat = new THREE.Quaternion();
 const fxA = new THREE.Vector3();
 const fxB = new THREE.Vector3();
 
@@ -1643,8 +1649,8 @@ function setFantasy(on) {
   // наруч вместо наручного экрана
   for (const c of controllers) if (c.userData.wrist?.group) c.userData.wrist.group.visible = !on;
   if (bracer?.group) bracer.group.visible = on;
-  skills?.reset?.();
-  skills?.setVisible?.(on);
+  skills?.setEnabled?.(on);
+  if (on) skills?.reset?.();
   groundY = 0; feet = 0; vy = 0; onGround = true;
 }
 
@@ -1688,113 +1694,77 @@ function moveHeadTo(p) {
   updateHead();
 }
 
-const skillHitTest = (from, dir, len) => hitTest(from, dir, len, null);
-
-// урон навыками: по области, лучом, цепной молнией
-function damageArea(point, radius) {
+// урон навыками по мишеням (бомбы не трогаем); test(центр, радиус мишени)
+const skillPoint = new THREE.Vector3();
+function skillDamage(test) {
   if (!scoring()) return 0;
   let n = 0;
   for (let i = targets.children.length - 1; i >= 0; i--) {
     const t = targets.children[i];
-    if (t.position.distanceTo(point) <= radius + t.userData.radius) { hitTarget(t, t.position.clone(), null); n++; }
+    if (t.userData.type === 'bomb' || !test(t.position, t.userData.radius)) continue;
+    n++;
+    hitTarget(t, skillPoint.copy(t.position), weaponHand);
   }
   if (n) hits++;
   return n;
 }
+// расстояние от точки до отрезка луча
+function rayDist(o, d, len, p) {
+  const t = rand.clamp(fxA.subVectors(p, o).dot(d), 0, len);
+  return fxB.copy(o).addScaledVector(d, t).distanceTo(p);
+}
+// молния: до count ближайших мишеней в конусе ~37°
+function skillLightning(origin, dir, count, range) {
+  if (!scoring()) return [];
+  const list = targets.children
+    .filter((t) => t.userData.type !== 'bomb' && t.position.distanceTo(origin) < range &&
+      fxA.subVectors(t.position, origin).normalize().dot(dir) > 0.8)
+    .sort((a, b) => a.position.distanceToSquared(origin) - b.position.distanceToSquared(origin))
+    .slice(0, count);
+  const points = list.map((t) => t.position.clone());
+  list.forEach((t, i) => hitTarget(t, points[i], weaponHand));
+  if (list.length) hits++;
+  return points;
+}
+// взрыв по области (огненные снаряды с пометкой explode)
 function explodeAt(point, radius, power = 1) {
   fx.shockwave?.(point, 0x8fd8ff);
   fx.burst(point, 0x9fe7ff, Math.round(14 + 14 * power));
   playSpell('enemy-die', { distance: point.distanceTo(headPos) });
-  if (damageArea(point, radius)) hitstopT = Math.max(hitstopT, 0.06);
-}
-function beamDamage(origin, dir, length, radius) {
-  if (!scoring()) return;
-  let n = 0;
-  for (let i = targets.children.length - 1; i >= 0; i--) {
-    const t = targets.children[i];
-    fxA.subVectors(t.position, origin);
-    const along = fxA.dot(dir);
-    if (along < 0 || along > length) continue;
-    const r = radius + t.userData.radius;
-    if (fxA.lengthSq() - along * along <= r * r) { hitTarget(t, t.position.clone(), null); n++; }
-  }
-  if (n) { hits++; hitstopT = Math.max(hitstopT, 0.08); }
-}
-const chainList = [];
-const chainPoints = [];
-function chainLightning(origin, dir) {
-  chainList.length = 0;
-  if (scoring()) {
-    for (const t of targets.children) {
-      if (t.userData.type === 'bomb') continue; // молния обходит проклятых
-      fxA.subVectors(t.position, origin);
-      const d = fxA.length();
-      if (d < 25 && fxA.dot(dir) / d > Math.cos(toRad(35))) chainList.push(t);
-    }
-    chainList.sort((a, b) => a.position.distanceToSquared(origin) - b.position.distanceToSquared(origin));
-    chainList.length = Math.min(chainList.length, 4);
-  }
-  chainPoints.length = 0;
-  chainPoints.push(origin.clone());
-  for (const t of chainList) chainPoints.push(t.position.clone());
-  if (chainPoints.length === 1) chainPoints.push(fxB.copy(origin).addScaledVector(dir, 8).clone());
-  skills?.drawLightning?.(chainPoints);
-  for (const t of chainList) hitTarget(t, t.position.clone(), null);
-  if (chainList.length) { hits++; hitstopT = Math.max(hitstopT, 0.06); }
-}
-function spawnFireball(origin, dir, power = 0.8) {
-  ballistics.fire({
-    origin, dir, speed: 24, drag: 0, gravity: 0, penetration: 0, visualFrom: origin,
-    color: 0xff7a2a, tracer: true, bolt: true, maxRange: 90,
-    shot: { pending: 1, hit: false, kills: 0, round: false, controller: null, explode: { radius: 1.8, power } },
-  });
-  playSpell('fireball');
+  if (skillDamage((p, rad) => p.distanceTo(point) < radius + rad)) hitstopT = Math.max(hitstopT, 0.06);
 }
 
-const RUNE_NAMES = { circle: 'Руна щита', triangle: 'Огненный шар', zigzag: 'Молния', spiral: 'Мана восстановлена' };
-function onSkillEvent(e) {
-  switch (e.type) {
-    case 'teleport': moveHeadTo(e.to); break;
-    case 'dash':
-      rig.position.x += e.delta.x;
-      rig.position.z += e.delta.z;
-      updateHead();
-      break;
-    case 'sky-step': vy = Math.sqrt(2 * MOVE.gravity * 0.9); onGround = false; break;
-    case 'explosion': explodeAt(e.point, e.radius, e.power); break;
-    case 'beam': beamDamage(e.origin, e.dir, e.length, e.radius); break;
-    case 'fireball': spawnFireball(e.origin, e.dir, e.power); break;
-    case 'lightning': chainLightning(e.origin, e.dir); break;
-    case 'hitstop': hitstopT = Math.max(hitstopT, (e.ms || 60) / 1000); break;
-    case 'slowmo': if (e.active) notify('УСКОРЕНИЕ ВОСПРИЯТИЯ', '#b48cff'); break;
-    case 'ult': if (e.active) notify('ПРОБУЖДЕНИЕ!', '#ffd23f'); break;
-    case 'rune': if (RUNE_NAMES[e.name]) notify(RUNE_NAMES[e.name], '#9fe7ff'); break;
-  }
-}
+// навыки «Арены магов»: мир, мишени и перемещение — через hooks
+const skills = safeCall(skillsMod.createSkills, {
+  scene, camera, quality,
+  hooks: {
+    teleport: (p) => moveHeadTo(p),
+    skyJump() { vy = Math.sqrt(2 * MOVE.gravity * 0.8); onGround = false; },
+    blink() { comfort?.onSnapTurn?.(); },
+    damageSphere: (c, r) => skillDamage((p, rad) => p.distanceTo(c) < r + rad),
+    damageRay: (o, d, len, r) => skillDamage((p, rad) => rayDist(o, d, len, p) < r + rad),
+    lightning: skillLightning,
+    hitTest: (from, dir, len) => hitTest(from, dir, len, null),
+    hitstop(sec) { hitstopT = Math.max(hitstopT, Math.min(0.08, sec)); },
+    sound: playSpell, notify, vibrate,
+    projectiles: () => null, // снаряды противников подключит аккаунт 3
+    surfaces: () => ({ radius: FANTASY_ARENA, platforms: fantasyWorld?.platforms || [] }),
+  },
+});
 
+const skillCtx = { left: null, right: null, weaponHand: null, headPos, fwd, airborne: false, feetY: 0 };
 function updateFantasy(dt) {
-  if (!fantasy) { aPressedEdge = false; return; }
+  if (!fantasy) return;
   attachBracer();
-  camera.getWorldQuaternion(headQuat);
-  const off = offHand();
-  gestureState = gestures?.update?.(dt, {
-    weaponHand, offHand: off, headPos, headQuat, offTrigger: !!off?.userData.trigHeld,
-    bracerTouchPoint: bracer?.group?.userData.touchPoint || null, enabled: true,
-  }) || null;
-  const runeFailed = !!(wasDrawing && gestureState && !gestureState.drawing && !gestureState.rune);
-  wasDrawing = !!gestureState?.drawing;
-  if (skills) {
-    const events = skills.update(dt, {
-      enabled: true, headPos, headQuat, weaponHand, offHand: off, leftStick,
-      grips: { weapon: !!weaponHand?.userData.gripHeld, off: !!off?.userData.gripHeld && !off.userData.grabbed },
-      triggers: { weapon: !!weaponHand?.userData.trigHeld, off: !!off?.userData.trigHeld },
-      jumpPressed: aPressedEdge, airborne: !onGround, gestures: gestureState, runeFailed,
-      teleportSurfaces: fantasyWorld.teleportSurfaces, blockers: fantasyWorld.colliders, arenaRadius: FANTASY_ARENA,
-      hitTest: skillHitTest,
-    });
-    for (const e of events || []) onSkillEvent(e);
+  skillCtx.left = skillCtx.right = null;
+  for (const c of controllers) {
+    const h = c.userData.src?.handedness;
+    if (h === 'left' || h === 'right') skillCtx[h] = c;
   }
-  aPressedEdge = false;
+  skillCtx.weaponHand = weaponHand;
+  skillCtx.airborne = !onGround;
+  skillCtx.feetY = groundY + feet;
+  skills?.update?.(dt, skillCtx);
   updateSupport();
 }
 
@@ -1805,7 +1775,7 @@ function updateBracer() {
   const w = arsenal.current;
   bracerInfo.mana = skills ? Math.round(skills.mana) : 0;
   bracerInfo.maxMana = skills?.maxMana ?? 100;
-  bracerInfo.skills = skills?.skillsInfo?.() || bracerInfo.skills;
+  bracerInfo.skills = skills?.skillStatus?.() || bracerInfo.skills;
   bracerInfo.ult01 = skills?.ult01 ?? 0;
   bracerInfo.score = score;
   bracerInfo.timeLeft = timeLeft;
@@ -2010,10 +1980,10 @@ if (/[?&]debug\b/.test(location.search)) {
     fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
     select(i) { arsenal.select(i); },
     get touch() { return touch; },
-    get fantasy() { return { active: fantasy, mode: userSettings.mode, mana: skills?.mana, ult: skills?.ult01, timeScale: skills?.timeScale, groundY, menu: menu === fantasyMenu ? 'fantasy' : 'classic', modeButton: modeButton.visible }; },
+    get fantasy() { return { active: fantasy, mode: userSettings.mode, mana: skills?.mana, ult: skills?.ult01, timeScale: skills?.timeScale, lastCast: skills?.lastCast, kiState: skills?.kiState, groundY, menu: menu === fantasyMenu ? 'fantasy' : 'classic', modeButton: modeButton.visible }; },
     setMode(m) { setMode(m); },
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y, z)); },
-    skillEvent(e) { onSkillEvent(e); },
+    get skills() { return skills; },
     get holsters() { return holsters; },
     get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
