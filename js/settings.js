@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   vrReload: 'hands',   // 'hands' — магазин с пояса (хват тоже работает) | 'button' — кнопкой хвата
   holsters: true,      // кобуры на теле в VR
   leftHanded: false,   // оружие в левой руке
+  mode: 'fantasy',     // режим в шлеме: 'fantasy' | 'realism' (на ПК всегда реализм)
 });
 
 const QUALITY_IDS = ['high', 'medium', 'low'].filter((id) => QUALITY[id]);
@@ -45,6 +46,7 @@ function sanitize(s) {
   s.vrReload = s.vrReload === 'button' ? 'button' : 'hands';
   s.holsters = bool(s.holsters, D.holsters);
   s.leftHanded = bool(s.leftHanded, D.leftHanded);
+  s.mode = s.mode === 'realism' ? 'realism' : 'fantasy';
   return s;
 }
 
@@ -279,6 +281,11 @@ export function buildSettingsUi({ qualityLabel } = {}) {
       ),
       group('Графика', qualityRows, note),
       group('VR',
+        selectRow('mode', {
+          label: 'Режим в VR',
+          options: [['fantasy', 'Фэнтези — магия и навыки'], ['realism', 'Реализм — огнестрельное оружие']],
+          hint: 'На ПК и телефоне всегда реализм. В шлеме режим можно сменить и в меню.',
+        }),
         selectRow('turn', { label: 'Поворот в VR', options: [['snap', 'Рывком на 45°'], ['smooth', 'Плавно']] }),
         toggleRow('vignette', { label: 'Затемнение краёв при движении' }),
         selectRow('vrReload', {

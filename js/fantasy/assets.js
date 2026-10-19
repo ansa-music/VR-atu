@@ -1,6 +1,8 @@
 // Загрузка 3D-моделей из assets/models/<id>.glb (GLTFLoader r160).
 // loadModel(id) → Promise<Object3D | null>: null, если файла нет — модуль берёт процедурную модель.
 // Каждый вызов отдаёт свою копию (clone), исходник кэшируется.
+// Список готовых моделей — assets/models/models.json (["wand", "bow", …]): так в консоли
+// нет 404 на ещё не сделанные файлы. Положили .glb — допишите id в этот список.
 import * as THREE from 'three';
 
 const BASE = new URL('../../assets/models/', import.meta.url);
@@ -29,14 +31,29 @@ function prepare(root) {
   return root;
 }
 
+let manifest = null;
+function getManifest() {
+  if (!manifest) {
+    manifest = fetch(new URL('models.json', BASE).href, { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((list) => (Array.isArray(list) ? new Set(list.map(String)) : null))
+      .catch(() => null);
+  }
+  return manifest;
+}
+
 async function fetchModel(id) {
   if (!/^[a-z0-9_-]+$/i.test(id)) return null;
   const url = new URL(`${id}.glb`, BASE).href;
-  // сначала HEAD: на отсутствующий файл не будет ошибки парсера в консоли
-  try {
-    const head = await fetch(url, { method: 'HEAD', cache: 'no-cache' });
-    if (!head.ok) return null;
-  } catch { return null; }
+  const list = await getManifest();
+  if (list && !list.has(id)) return null;
+  if (!list) {
+    // списка нет — проверяем файл запросом HEAD
+    try {
+      const head = await fetch(url, { method: 'HEAD', cache: 'no-cache' });
+      if (!head.ok) return null;
+    } catch { return null; }
+  }
   const loader = await getLoader();
   if (!loader) return null;
   try {
