@@ -1,0 +1,75 @@
+// shared/defs/quests.js — сюжет, квесты архетипов и шаблоны побочных квестов (разделы 2 и 5).
+// step.type: goto | interact | kill | collect | boss | puzzle | talk | photo | escort
+// rewards: xp, items[], skills[] (выдаёт навык), skillPoints (ОН), unlock[] (poi_/gate_/feature), upgrade {skill, rank}, startKit (набор по архетипу, weapons.js)
+export const QUESTS = Object.freeze({
+  q_main_01: { title: 'Пробуждение', kind: 'main', biome: 'b_meadow', level: 1, giver: null,
+    steps: [{ type: 'goto', poi: 'poi_old_bunker' }, { type: 'kill', mob: 'm_meadow_slime', n: 3 }, { type: 'goto', poi: 'poi_hub_dawnford' }],
+    rewards: { xp: 100, startKit: true }, next: 'q_main_02' },
+  q_main_02: { title: 'Первый маяк', kind: 'main', biome: 'b_meadow', level: 2, giver: 'npc_ira',
+    steps: [{ type: 'interact', poi: 'poi_tower_meadow' }, { type: 'goto', poi: 'poi_stone_circle' }],
+    rewards: { xp: 250, skills: ['s_grapple'] }, next: 'q_main_03' },
+  q_main_03: { title: 'Шёпот корней', kind: 'main', biome: 'b_forest', level: 6, giver: 'npc_ira',
+    steps: [{ type: 'goto', poi: 'poi_hub_rootvale' }, { type: 'collect', item: 'it_mat_heartwood', n: 3 }, { type: 'talk', npc: 'npc_olh' }],
+    rewards: { xp: 500, unlock: ['poi_guardian_tree'] }, next: 'q_main_04' },
+  q_main_04: { title: 'Гниль в Древе', kind: 'main', biome: 'b_forest', level: 11,
+    steps: [{ type: 'boss', boss: 'boss_rotroot', poi: 'poi_guardian_tree' }],
+    rewards: { xp: 900, skills: ['s_dash'], items: ['it_core_shard'], skillPoints: 1 }, next: 'q_main_05' },
+  q_main_05: { title: 'Тонущий поезд', kind: 'main', biome: 'b_swamp', level: 15, giver: 'npc_olh',
+    steps: [{ type: 'talk', npc: 'npc_witch' }, { type: 'collect', item: 'it_purity_herb', n: 4 }, { type: 'boss', boss: 'boss_hydra_tinara', poi: 'poi_sunken_train' }],
+    rewards: { xp: 1400, items: ['it_purity_amulet'], skillPoints: 1 }, next: 'q_main_06' },
+  q_main_06: { title: 'Ветер перевала', kind: 'main', biome: 'b_mountains', level: 15,
+    steps: [{ type: 'goto', poi: 'poi_hub_pass_camp' }, { type: 'collect', item: 'it_mat_frost_core', n: 5 }, { type: 'talk', npc: 'npc_soyka' }],
+    rewards: { xp: 1600, skills: ['s_glide'] }, next: 'q_main_07' },
+  q_main_07: { title: 'Хранитель холода', kind: 'main', biome: 'b_mountains', level: 21,
+    steps: [{ type: 'boss', boss: 'boss_ymir', poi: 'poi_frost_fortress' }],
+    rewards: { xp: 2200, unlock: ['gate_ice_bridge'], skillPoints: 1 }, next: 'q_main_08' },
+  q_main_08: { title: 'Глаз обсерватории', kind: 'main', biome: 'b_mountains', level: 20,
+    steps: [{ type: 'interact', poi: 'poi_tower_mountains' }, { type: 'puzzle', poi: 'poi_ice_cave' }],
+    rewards: { xp: 2000, upgrade: { skill: 's_scan', rank: 2 }, mark: 'poi_sun_temple' }, next: 'q_main_09' },
+  q_main_09: { title: 'Солнечная печать', kind: 'main', biome: 'b_desert_ruins', level: 25, giver: 'npc_set',
+    steps: [{ type: 'puzzle', poi: 'poi_seal_puzzle' }, { type: 'boss', boss: 'boss_akhmaret', poi: 'poi_sun_temple' }],
+    rewards: { xp: 3000, items: ['it_fire_seal'], skillPoints: 1 }, next: 'q_main_10' },
+  q_main_10: { title: 'Шаг сквозь пустоту', kind: 'main', biome: 'b_desert_ruins', level: 24,
+    steps: [{ type: 'interact', poi: 'poi_tower_desert' }],
+    rewards: { xp: 2500, skills: ['s_teleport'] }, next: 'q_main_11' },
+  q_main_11: { title: 'Мост из обсидиана', kind: 'main', biome: 'b_volcano', level: 27, giver: 'npc_gorn',
+    steps: [{ type: 'goto', poi: 'poi_hub_ash_forge' }, { type: 'collect', item: 'it_ember_core', n: 3 }, { type: 'puzzle', poi: 'poi_obsidian_bridge' }],
+    rewards: { xp: 3500, unlock: ['poi_ash_citadel'] }, next: 'q_main_12' },
+  q_main_12: { title: 'Сердце Пепла', kind: 'main', biome: 'b_volcano', level: 30,
+    steps: [{ type: 'boss', boss: 'boss_ignarok', poi: 'poi_ash_citadel', phases: 3 }],
+    rewards: { xp: 6000, unlock: ['ng_plus'], skillPoints: 1 }, next: null },
+
+  // Необязательный босс лугов (обучение механикам фаз). Не даёт ОН.
+  q_side_slime_king: { title: 'Король пруда', kind: 'side', biome: 'b_meadow', level: 6, giver: 'npc_mot',
+    steps: [{ type: 'goto', poi: 'poi_slime_pond' }, { type: 'boss', boss: 'boss_slime_king', poi: 'poi_slime_pond' }],
+    rewards: { xp: 500, unlock: ['poi_slime_pond'] }, next: null },
+
+  // Квесты архетипов (L12): открывают ульту своего архетипа.
+  q_arch_guardian: { title: 'Клятва бастиона', kind: 'archetype', archetype: 'guardian', biome: 'b_forest', level: 12, giver: 'npc_olh',
+    steps: [{ type: 'talk', npc: 'npc_olh' }, { type: 'kill', mob: 'm_thorn_treant', n: 2 }, { type: 'goto', poi: 'poi_wisp_shrine' }],
+    rewards: { xp: 1200, skills: ['s_territory'] }, next: null },
+  q_arch_rogue: { title: 'Тени топей', kind: 'archetype', archetype: 'rogue', biome: 'b_swamp', level: 12, giver: 'npc_toad',
+    steps: [{ type: 'talk', npc: 'npc_toad' }, { type: 'kill', mob: 'm_bog_hag', n: 1 }, { type: 'goto', poi: 'poi_bog_chest' }],
+    rewards: { xp: 1200, skills: ['s_blade_dance'] }, next: null },
+  q_arch_mystic: { title: 'Лунная академия', kind: 'archetype', archetype: 'mystic', biome: 'b_forest', level: 12, giver: 'npc_olh',
+    steps: [{ type: 'goto', poi: 'poi_mushroom_cave' }, { type: 'kill', mob: 'm_ghost_owl', n: 3 }, { type: 'puzzle', poi: 'poi_wisp_shrine' }],
+    rewards: { xp: 1200, skills: ['s_ki_wave'] }, next: null },
+  q_arch_gunslinger: { title: 'Часы охотника', kind: 'archetype', archetype: 'gunslinger', biome: 'b_meadow', level: 12, giver: 'npc_bor',
+    steps: [{ type: 'talk', npc: 'npc_bor' }, { type: 'kill', mob: 'm_forest_bandit', n: 5 }, { type: 'photo', poi: 'poi_owl_cliff' }],
+    rewards: { xp: 1200, skills: ['s_bullet_time'] }, next: null },
+  // «Слияние» (L20): разрешает брать ульту чужого архетипа (стоит 120 ульты вместо 100).
+  q_fusion: { title: 'Слияние', kind: 'archetype', archetype: null, biome: 'b_desert_ruins', level: 20, giver: 'npc_set',
+    steps: [{ type: 'talk', npc: 'npc_set' }, { type: 'goto', poi: 'poi_sun_temple' }, { type: 'kill', mob: 'm_stone_guardian', n: 2 }],
+    rewards: { xp: 2500, unlock: ['off_archetype_ult'] }, next: null },
+});
+
+export const SIDE_QUEST_TEMPLATES = Object.freeze([
+  { id: 'q_tpl_hunt',    title: 'Охота: {mob}',      steps: [{ type: 'kill', mob: '{biomeMob}', n: '{5-12}' }], reward: { xpMul: 1, gold: [40, 120] } },
+  { id: 'q_tpl_deliver', title: 'Посылка для {npc}', steps: [{ type: 'collect', item: 'it_parcel', n: 1 }, { type: 'talk', npc: '{otherHubNpc}' }], reward: { xpMul: 0.6, gold: [60, 150] } },
+  { id: 'q_tpl_gather',  title: 'Сбор: {item}',      steps: [{ type: 'collect', item: '{biomeResource}', n: '{4-10}' }], reward: { xpMul: 0.7, items: ['{consumable}'] } },
+  { id: 'q_tpl_rescue',  title: 'Спасти {npc}',      steps: [{ type: 'goto', poi: '{camp}' }, { type: 'kill', mob: 'any', n: 'all' }, { type: 'escort', to: 'nearest_campfire' }], reward: { xpMul: 1.3, gold: [100, 250] } },
+  { id: 'q_tpl_puzzle',  title: 'Загадка: {poi}',    steps: [{ type: 'puzzle', poi: '{puzzlePoi}' }], reward: { xpMul: 1.2, chest: 'gold' } },
+  { id: 'q_tpl_photo',   title: 'Снимок с {poi}',    steps: [{ type: 'photo', poi: '{viewpoint}' }], reward: { xpMul: 0.5, items: ['it_atlas_page'] } },
+  { id: 'q_tpl_clear',   title: 'Зачистить {poi}',   steps: [{ type: 'kill', mob: 'any', n: 'all', poi: '{camp}' }], reward: { xpMul: 1.5, unlockFastTravel: true } },
+]);
+// XP квестов: сюжет ≈ 150 × L, побочные 60 × L (раздел 5); значения xp выше — ручная доводка поверх этой формулы.

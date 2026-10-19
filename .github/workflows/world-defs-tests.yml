@@ -1,0 +1,39 @@
+name: Open world data tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'js/**'
+      - '.github/workflows/world-defs-tests.yml'
+  pull_request:
+    paths:
+      - 'shared/**'
+      - 'tools/**'
+      - 'tests/**'
+      - 'js/**'
+      - '.github/workflows/world-defs-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: for f in $(git ls-files 'js/*.js' 'js/**/*.js' 'shared/**/*.js' 'tools/*.mjs' 'tests/*.mjs' 'tests/**/*.mjs'); do node --check "$f"; done
+      - name: Validate defs
+        run: node tools/validate-defs.mjs
+      - name: Open world tests
+        run: node --test tests/*.test.mjs
+      - name: Fantasy combat tests
+        run: |
+          node tests/node/weapons.test.mjs
+          node tests/node/waves.test.mjs
+          node --import ./tests/node/register.mjs tests/node/bow-melee.test.mjs
+          node --expose-gc --import ./tests/node/register.mjs tests/node/enemies.test.mjs
