@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тест: мир «Арена магов»</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0a1a; color: #e8edff; font: 13px system-ui, sans-serif; }
+    canvas { display: block; }
+    #panel { position: fixed; top: 8px; left: 8px; width: 290px; max-height: calc(100% - 16px); overflow: auto; z-index: 5;
+      background: rgba(10, 12, 30, .82); border: 1px solid #4f5bd5; border-radius: 10px; padding: 10px; }
+    #panel h3 { margin: 6px 0 4px; font-size: 12px; color: #9fe7ff; letter-spacing: .08em; }
+    #panel button { margin: 2px; padding: 4px 7px; background: #1d2550; color: #fff; border: 1px solid #5b6cd6; border-radius: 6px; cursor: pointer; font: inherit; }
+    #panel button:hover { background: #2c3a7a; }
+    #stats { position: fixed; top: 8px; right: 8px; z-index: 5; background: rgba(10, 12, 30, .82); padding: 6px 10px; border-radius: 8px; font: 12px ui-monospace, monospace; white-space: pre; }
+    #log { font: 11px ui-monospace, monospace; white-space: pre-wrap; color: #ffd23f; max-height: 140px; overflow: auto; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../vendor/three.module.js",
+        "three/addons/": "../vendor/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="panel">
+    <b>Арена магов — тест мира</b>
+    <h3>ВИД</h3>
+    <div id="views"></div>
+    <h3>МЕНЮ (клик по скрижали = pick)</h3>
+    <button data-menu="fantasy">Старт: фэнтези</button><button data-menu="realism">Старт: реализм</button>
+    <button data-menu="count">Отсчёт 3</button><button data-menu="go">ВПЕРЁД</button><button data-menu="results">Итоги</button>
+    <h3>РУНЫ МОСТА</h3>
+    <button data-rune="0">Попасть 40 м</button><button data-rune="1">75 м</button><button data-rune="2">110 м</button>
+    <h3>ЗВУК</h3>
+    <button id="music">Музыка вкл/выкл</button>
+    <label>интенсивность <input id="intensity" type="range" min="0" max="1" step="0.05" value="0.3"></label>
+    <div id="spells"></div>
+    <h3>ЖУРНАЛ</h3>
+    <div id="log"></div>
+  </div>
+  <div id="stats">загрузка…</div>
+  <script type="module">
+    // Тестовая страница мира, скрижалей, наруча и звука «Арены магов».
+    // Кадры идут по таймеру, поэтому страница работает и в скрытом окне; ?quality=low|medium|high
+    import * as THREE from 'three';
+    import { VRButton } from 'three/addons/webxr/VRButton.js';
+    import { QUALITY, detectQuality } from '../js/quality.js';
+
+    const logEl = document.getElementById('log');
+    const log = (...a) => { logEl.textContent = a.join(' ') + '\n' + logEl.textContent; console.log('[world-test]', ...a); };
+    const load = (p) => import(p).catch((e) => { log('НЕ ЗАГРУЖЕН', p, e.message); return {}; });
+    const [worldMod, uiMod, bracerMod, audioMod] = await Promise.all([
+      load('../js/fantasy/world.js'), load('../js/fantasy/ui.js'), load('../js/fantasy/bracer.js'), load('../js/fantasy/audio.js'),
+    ]);
+    const quality = detectQuality();
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, quality.pixelRatio));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+    document.body.appendChild(VRButton.createButton(renderer));
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x101020);
+    scene.add(new THREE.HemisphereLight(0x8899ff, 0x221133, 1.0));
+    const rig = new THREE.Group();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.03, 400);
+    camera.rotation.order = 'YXZ';
+    camera.position.set(0, 1.6, 0);
+    rig.add(camera);
+    scene.add(rig);
+
+    const safe = (fn, ...a) => { try { return fn ? fn(...a) : null; } catch (e) { log('ОШИБКА', e.message); console.error(e); return null; } };
+    const world = safe(worldMod.createFantasyWorld, scene, { quality });
+    world?.setVisible?.(true);
+    log('мир:', world ? 'ok' : 'нет', '| платформ:', world?.platforms?.length ?? 0, '| коллайдеров:', world?.colliders?.length ?? 0, '| рун:', world?.runes?.meshes?.length ?? 0);
+
+    const board = safe(uiMod.createFantasyBoard);
+    if (board) { board.mesh.position.set(0, 4.2, -7); scene.add(board.mesh); }
+    const menu = safe(uiMod.createFantasyMenu);
+    if (menu) { menu.mesh.position.set(0, 1.6, -3); scene.add(menu.mesh); menu.showStart(60, 'fantasy'); }
+
+    // наруч на «левой руке» перед камерой
+    const hand = new THREE.Group();
+    hand.position.set(-0.13, -0.24, -0.34);
+    hand.rotation.set(0.9, 0.35, 0.3);
+    camera.add(hand);
+    const bracer = safe(bracerMod.createBracer);
+    if (bracer?.group) hand.add(bracer.group);
+
+    // виды камеры
+    const D = new THREE.Vector3(Math.cos(Math.PI * 1.5 + Math.PI / 16), 0, Math.sin(Math.PI * 1.5 + Math.PI / 16));
+    let yaw = 0, pitch = 0;
+    const views = {
+      'Арена': () => { rig.position.set(0, 0, 0); yaw = 0; pitch = 0; },
+      'Мост': () => { rig.position.set(0, 0, 0); yaw = Math.atan2(-D.x, -D.z); pitch = 0.02; },
+      'Врата': () => { rig.position.set(-D.x * 6, 0, -D.z * 6); yaw = Math.atan2(-D.x, -D.z); pitch = 0.35; },
+      'Небо': () => { rig.position.set(0, 0, 0); yaw = 2.2; pitch = 0.6; },
+      'Назад': () => { rig.position.set(0, 0, 0); yaw = Math.PI; pitch = 0; },
+      'Платформы': () => { rig.position.set(0, 4, 18); yaw = 0; pitch = -0.25; },
+      'Сверху': () => { rig.position.set(0, 30, 34); yaw = 0; pitch = -0.6; },
+      'Снизу': () => { rig.position.set(0, -14, 30); yaw = 0; pitch = 0.25; },
+    };
+    const viewsEl = document.getElementById('views');
+    for (const name of Object.keys(views)) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.onclick = () => views[name]();
+      viewsEl.appendChild(b);
+    }
+
+    // обзор перетаскиванием мыши
+    let drag = null;
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      drag = { x: e.clientX, y: e.clientY, moved: false };
+    });
+    addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      yaw -= dx * 0.004; pitch = THREE.MathUtils.clamp(pitch - dy * 0.004, -1.4, 1.4);
+      drag.x = e.clientX; drag.y = e.clientY;
+    });
+    addEventListener('pointerup', (e) => {
+      if (drag && !drag.moved && menu) pickMenu(e);
+      drag = null;
+    });
+
+    // клик по скрижали меню → pick(uv)
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    function pickMenu(e) {
+      ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObject(menu.mesh, false)[0];
+      if (hit?.uv) log('pick(uv', hit.uv.x.toFixed(2), hit.uv.y.toFixed(2), ') →', menu.pick(hit.uv));
+    }
+
+    document.querySelectorAll('[data-menu]').forEach((b) => b.onclick = () => {
+      const m = b.dataset.menu;
+      if (!menu) return;
+      if (m === 'fantasy' || m === 'realism') menu.showStart(60, m);
+      else if (m === 'count') menu.showCountdown(3);
+      else if (m === 'go') menu.showCountdown(0);
+      else menu.showResults({ score: 128, best: 140, accuracy: 74, newRecord: false, top: [140, 128, 99], maxCombo: 17, wave: 3 });
+    });
+
+    document.querySelectorAll('[data-rune]').forEach((b) => b.onclick = () => {
+      const mesh = world?.runes?.meshes?.[Number(b.dataset.rune)];
+      if (!mesh) return log('нет руны');
+      const p = mesh.getWorldPosition(new THREE.Vector3());
+      log('руна:', JSON.stringify(world.runes.hit(mesh, p)));
+    });
+
+    // звук
+    let musicOn = false;
+    document.getElementById('music').onclick = () => {
+      musicOn = !musicOn;
+      if (musicOn) audioMod.fantasyMusic?.start(); else audioMod.fantasyMusic?.stop();
+    };
+    document.getElementById('intensity').oninput = (e) => audioMod.fantasyMusic?.setIntensity(Number(e.target.value));
+    const SPELLS = ['cast-bolt', 'cast-orb', 'charge', 'ki-wave', 'flash-step', 'barrier-up', 'barrier-hit', 'slowmo-in', 'slowmo-out',
+      'sword-swing', 'sword-hit', 'bow-draw', 'bow-release', 'arrow-hit', 'rune-drawn', 'rune-fail', 'ult', 'enemy-hit',
+      'enemy-die', 'fireball', 'boss-roar', 'fairy', 'skull', 'mana-restore', 'element-switch', 'level-up'];
+    const spellsEl = document.getElementById('spells');
+    for (const s of SPELLS) {
+      const b = document.createElement('button');
+      b.textContent = s;
+      b.onclick = () => audioMod.playSpell?.(s, s === 'element-switch' ? { element: ['fire', 'ice', 'lightning'][Math.random() * 3 | 0] } : {});
+      spellsEl.appendChild(b);
+    }
+
+    // демонстрация наруча: мана и откаты по кругу
+    const SKILLS = [
+      { id: 'flash-step', name: 'Мгновенный шаг' }, { id: 'orb', name: 'Энергосфера' }, { id: 'ki-wave', name: 'Волна ки' },
+      { id: 'slowmo', name: 'Ускорение восприятия' }, { id: 'barrier', name: 'Барьер' }, { id: 'sky-step', name: 'Небесный шаг' },
+    ].map((s) => ({ ...s, ready: true, cooldown01: 0 }));
+    const bracerInfo = { mana: 100, maxMana: 100, skills: SKILLS, ult01: 0, score: 0, timeLeft: 60, weapon: { name: 'Посох стихий', mana01: 1 }, fps: 0 };
+
+    // кадры: по таймеру вне VR (работает и в скрытом окне), в VR — от шлема
+    const clock = new THREE.Clock();
+    const stats = document.getElementById('stats');
+    let frames = 0, fpsT = 0, fps = 0, timer = 0;
+    function frame() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const t = clock.elapsedTime;
+      if (!renderer.xr.isPresenting) camera.rotation.set(pitch, yaw, 0);
+      world?.update?.(dt, t);
+      const k = (t % 12) / 12;
+      bracerInfo.mana = Math.round(100 * Math.abs(Math.cos(t * 0.3)));
+      bracerInfo.ult01 = k;
+      bracerInfo.score = Math.floor(t * 3);
+      bracerInfo.timeLeft = Math.max(0, 60 - (t % 60));
+      bracerInfo.weapon.mana01 = bracerInfo.mana / 100;
+      SKILLS.forEach((s, i) => { const c = ((t + i * 1.3) % 6) / 6; s.cooldown01 = c < 0.5 ? 1 - c * 2 : 0; s.ready = c >= 0.5; });
+      bracerInfo.fps = fps;
+      bracer?.update?.(bracerInfo);
+      board?.update?.({ score: bracerInfo.score, timeLeft: bracerInfo.timeLeft, multiplier: 1 + Math.floor(k * 4), timeFrac: bracerInfo.timeLeft / 60, wave: 2 });
+      renderer.render(scene, camera);
+      frames++; fpsT += dt;
+      if (fpsT >= 0.5) {
+        fps = Math.round(frames / fpsT); frames = 0; fpsT = 0;
+        const i = renderer.info;
+        stats.textContent = `качество: ${quality.id}\nкадров/с: ${fps}\nвызовов: ${i.render.calls}\nтреуг.: ${i.render.triangles}\nгеом.: ${i.memory.geometries}  текст.: ${i.memory.textures}\nпрограмм: ${i.programs?.length}`;
+      }
+    }
+    function tick() {
+      if (renderer.xr.isPresenting) return;
+      frame();
+      timer = setTimeout(tick, 16);
+    }
+    renderer.xr.addEventListener('sessionstart', () => { clearTimeout(timer); renderer.setAnimationLoop(frame); });
+    renderer.xr.addEventListener('sessionend', () => { renderer.setAnimationLoop(null); tick(); });
+    tick();
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+    window.worldTest = { THREE, scene, camera, rig, world, menu, board, bracer, views, renderer, setView: (n) => views[n]?.() };
+  </script>
+</body>
+</html>
