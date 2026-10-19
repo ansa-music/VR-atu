@@ -5,7 +5,9 @@
 const DEG = Math.PI / 180;
 const G = 9.81;
 
-export const MODE_LABEL = { auto: 'АВТ', single: 'ОД', pump: 'ПОМПА', bolt: 'ЗАТВОР' };
+export const MODE_LABEL = { auto: 'АВТ', single: 'ОД', pump: 'ПОМПА', bolt: 'ЗАТВОР',
+  // фэнтези: стихии посоха и режимы маны
+  fire: 'ОГОНЬ', ice: 'ЛЁД', lightning: 'МОЛНИЯ', charge: 'ЗАРЯД', swing: 'ВЗМАХ', draw: 'НАТЯЖЕНИЕ' };
 
 export const WEAPONS = [
   {
@@ -91,6 +93,7 @@ export class Weapon {
     this.bloom = 0; this.burst = 0; this.sinceShot = 99; this.shots = 0;
     this.heat = 0; this.overheat = 0;
     this.events.length = 0;
+    if (this.manaFed) this.resetMana();
   }
 
   get energy() { return this.def.action === 'energy'; }
@@ -123,6 +126,7 @@ export class Weapon {
   // Нажатие/удержание спуска. first — нажатие в этом кадре.
   // Возвращает { shot, burst, tracer } | { dry: true } | null
   pull(first) {
+    if (this.manaFed) return this.pullMana(first);
     const d = this.def;
     if (this.mode !== 'auto' && !first) return null;
     if (this.reloading) {
@@ -182,6 +186,7 @@ export class Weapon {
   }
 
   startReload() {
+    if (this.manaFed) return this.startManaRestore();
     const d = this.def;
     if (this.reloading || this.cycle > 0) return false;
     if (this.energy) {
@@ -219,6 +224,7 @@ export class Weapon {
   }
 
   update(dt) {
+    if (this.manaFed) { this.updateMana(dt); return; }
     const d = this.def;
     this.lastDt = dt;
     this.cooldown = Math.max(-0.1, this.cooldown - dt);
@@ -307,6 +313,7 @@ export class Weapon {
 
   // смена магазина рукой: патрон в патроннике не трогаем
   manualMagSwap() {
+    if (this.manaFed) { this.cancelReload(); return this.restoreMana(); } // кристалл маны с пояса
     if (!this.magFed || this.reserve <= 0 || this.cycle > 0) return false;
     this.cancelReload();
     this.emit('mag-out');
@@ -360,6 +367,121 @@ export class Weapon {
     if (r.drift && this.burst > 3) yaw += r.drift; // АК уводит вправо после третьего патрона
     const m = (crouch ? 0.8 : 1) * (1 - 0.15 * aim);
     return { pitch: pitch * m, yaw: yaw * m, punch: (r.punch || 0) * m };
+  }
+
+  // ---------- мана (фэнтези-оружие: action 'mana' | 'melee' | 'bow') ----------
+  // Вместо патронов — запас маны: тратится на выстрел, сама медленно восполняется,
+  // кристалл маны с пояса (manualMagSwap / restoreMana) восполняет сразу.
+  get manaFed() { const a = this.def.action; return a === 'mana' || a === 'melee' || a === 'bow'; }
+  get mana01() { return this.def.manaMax ? this.mana / this.def.manaMax : 0; }
+  // 0..1 — накопленный заряд (жезл), null — не заряжается
+  get charge01() { return this.charging === null || this.charging === undefined ? null : Math.min(1, this.charging / (this.def.charge?.time || 1)); }
+  // текущая стихия (посох): совпадает с mode, если режим — стихия
+  get element() { return this.def.elements ? this.mode : (this.def.element || null); }
+
+  resetMana() {
+    this.mana = this.def.manaMax || 0;
+    this.charging = null;
+    this.sinceSpend = 99;
+  }
+
+  // списать ману; false — не хватает (событие 'dry')
+  spend(cost) {
+    if (this.reloading) return false;
+    if (this.mana + 1e-6 < cost) { this.emit('dry'); this.emit('mana-empty'); return false; }
+    this.mana = Math.max(0, this.mana - cost);
+    this.sinceSpend = 0;
+    return true;
+  }
+
+  restoreMana(amount = Infinity) {
+    const max = this.def.manaMax || 0;
+    if (this.mana >= max) return false;
+    this.mana = Math.min(max, this.mana + amount);
+    this.emit('mana-restore');
+    return true;
+  }
+
+  pullMana(first) {
+    const d = this.def;
+    if (d.action !== 'mana') return null;           // клинок и лук стреляют не курком
+    if (this.reloading) return null;
+    if (d.charge) {
+      // жезл: нажатие начинает заряд, выстрел — при отпускании (release)
+      if (first && this.charging === null && this.cooldown <= 0) {
+        if (this.mana + 1e-6 < d.manaCost) { this.emit('dry'); this.emit('mana-empty'); return { dry: true }; }
+        this.charging = 0;
+        this.emit('charge-start');
+      }
+      return null;
+    }
+    if (!d.auto && !first) return null;
+    if (this.cooldown > 0) return null;
+    if (!this.spend(d.manaCost)) return first ? { dry: true } : null;
+    return this.markShot(1);
+  }
+
+  // отпускание курка: заряженный выстрел жезла. { shot, charge 0..1, cost } | null
+  release() {
+    const d = this.def;
+    if (!d.charge || this.charging === null) return null;
+    const c = d.charge;
+    const k = Math.min(1, this.charging / c.time);
+    this.charging = null;
+    const charged = k >= c.min;                     // короткое нажатие — обычная стрела
+    const charge = charged ? k : 0;
+    const cost = d.manaCost + (charged ? (c.cost - d.manaCost) * k : 0);
+    if (!this.spend(Math.min(cost, Math.max(d.manaCost, this.mana)))) return { dry: true };
+    const r = this.markShot(1 + (c.damageMul - 1) * charge);
+    r.charge = charge;
+    r.cost = cost;
+    if (charged) this.emit('charged-shot', { charge });
+    return r;
+  }
+
+  // общий учёт выстрела (рассеивание, отдача, событие)
+  markShot(power) {
+    const d = this.def;
+    this.cooldown = Math.max(this.cooldown, -this.lastDt) + d.interval;
+    this.burst = this.sinceShot > d.interval * 2.5 ? 1 : this.burst + 1;
+    this.sinceShot = 0;
+    this.shots++;
+    this.bloom = Math.min(d.spread.bloomMax, this.bloom + d.spread.bloom);
+    this.emit('shot', power !== 1 ? { power } : undefined);
+    return { shot: true, burst: this.burst, tracer: false, power, charge: 0, element: this.element };
+  }
+
+  // «перезарядка» маной: медленный сбор маны (ventTime), пока руки заняты
+  startManaRestore() {
+    const d = this.def;
+    if (this.reloading || this.mana >= (d.manaMax || 0)) return false;
+    this.charging = null;
+    this.reloading = { kind: 'mana', t: 0, dur: d.restoreTime || 1.2, marks: 0 };
+    this.emit('reload-start', { kind: 'mana' });
+    return true;
+  }
+
+  updateMana(dt) {
+    const d = this.def;
+    this.lastDt = dt;
+    this.cooldown = Math.max(-0.1, this.cooldown - dt);
+    this.sinceShot += dt;
+    this.sinceSpend += dt;
+    if (this.sinceShot > 0.05) this.bloom = Math.max(0, this.bloom - d.spread.bloomRecover * dt);
+    if (this.charging !== null) {
+      const before = this.charging;
+      this.charging += dt;
+      const t = d.charge.time;
+      if (before < t && this.charging >= t) this.emit('charge-full');
+    }
+    const r = this.reloading;
+    if (r) {
+      r.t += dt;
+      this.mana = Math.min(d.manaMax, this.mana + d.manaMax * dt / r.dur);
+      if (r.t >= r.dur) { this.mana = d.manaMax; this.reloading = null; this.emit('reloaded'); this.emit('mana-restore'); }
+    } else if (this.sinceSpend > (d.manaDelay ?? 0.8) && this.mana < d.manaMax) {
+      this.mana = Math.min(d.manaMax, this.mana + (d.manaRegen || 0) * dt);
+    }
   }
 }
 
