@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#070b1a">
-  <meta name="atu-build" content="atu-netplay-20261016c">
+  <meta name="atu-build" content="atu-fantasy-20261019">
   <meta name="color-scheme" content="dark">
   <title>ATU — VR Тир</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -136,6 +136,14 @@
       margin: 14px 0 0; color: var(--muted);
       font-size: clamp(13px, 2.2vw, 17px); letter-spacing: .12em; text-transform: uppercase;
     }
+    .ov-new {
+      display: inline-block; margin: 16px 0 0; padding: 8px 18px; border-radius: 999px;
+      border: 1px solid rgba(255, 196, 92, .55); background: rgba(255, 196, 92, .1);
+      color: #ffe2a8; font-size: clamp(13px, 2vw, 16px); line-height: 1.4;
+      box-shadow: 0 0 22px rgba(255, 196, 92, .25);
+    }
+    .ov-new span { color: #ffc45c; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-right: 6px; }
+    .ov-new b { color: #fff; }
 
     #play {
       display: inline-block; margin: 30px 0 34px; padding: 18px 60px; border: 0; border-radius: 999px; cursor: pointer;
@@ -284,6 +292,7 @@
       <div class="atu-brand" aria-label="ATU — VR тир"><span class="atu-mark">A<span>T</span>U</span><span class="atu-separator"></span><span class="atu-brand-text">АРЕНА<br>ТАКТИЧЕСКИЙ ТИР</span></div>
       <h1 class="ov-title" id="ov-title"><span class="t-vr">VR</span> <span class="t-tir">ТИР</span></h1>
       <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
+      <p class="ov-new"><span>✦ Новое в VR-шлеме</span> <b>Академия ATU — Арена магов</b>: магия, навыки, противники</p>
 
       <button id="play" type="button" disabled>ОДИНОЧНАЯ ИГРА</button>
 
@@ -324,7 +333,7 @@
             <dt><kbd>X</kbd></dt><dd>присесть</dd>
             <dt><kbd>B</kbd><kbd>Y</kbd></dt><dd>следующее / предыдущее оружие</dd>
           </dl>
-          <p class="note">Кнопка <b>«ВОЙТИ В VR»</b> внизу экрана.</p>
+          <p class="note">Кнопка <b>«ВОЙТИ В VR»</b> внизу экрана. В шлеме сразу запускается <b>«Арена магов»</b>, классический тир включается в меню в шлеме или в «Настройках» → «Режим в VR».</p>
         </section>
 
         <section class="card mk">
@@ -433,7 +442,7 @@
 
   <script type="module" src="js/overlay.js?v=atu-bastion-v2"></script>
   <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016c"></script>
-  <script type="module" src="js/main.js?v=atu-vrhands-1"></script>
+  <script type="module" src="js/main.js?v=atu-fantasy-1"></script>
   <script type="module" src="js/multiplayer-ui.js?v=atu-saved-name-20261016"></script>
 </body>
 </html>
