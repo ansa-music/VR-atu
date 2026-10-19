@@ -220,6 +220,13 @@
       _d.set(0, 0, -1).applyQuaternion(_q);
       return _o;
     }
+    // ПК: оружие сбоку, поэтому стреляем в точку под прицелом (30 м по взгляду)
+    const _aim = new THREE.Vector3(), _cd = new THREE.Vector3();
+    function aimAtCrosshair(origin, dir) {
+      camera.getWorldPosition(_aim); camera.getWorldDirection(_cd);
+      _aim.addScaledVector(_cd, 30);
+      dir.subVectors(_aim, origin).normalize();
+    }
     function launch(origin, dir, p, halfDeg) {
       if (halfDeg > 0) {
         const [a, b] = sampleSpread(halfDeg);
@@ -235,6 +242,7 @@
     function fireWeapon(w, r) {
       const g = guns[arsenal.index];
       muzzleRay(g);
+      if (!renderer.xr.isPresenting) aimAtCrosshair(_o, _d);
       launch(_o, _d, W.shotParams(w, r), w.spread({ aim: 0.6 }));
       g.fire();
     }
@@ -286,7 +294,9 @@
       return r;
     }
     const COLORS = { wisp: 0xbfefff, fairy: 0xffd34a, skull: 0xb05cff, guardian: 0x7fd8ff, eye: 0xff8a3a, boss: 0xff5a1f };
+    const stats = { hits: 0, kills: 0, blocked: 0, weak: 0, deflected: 0, waves: 0, arrows: 0, playerHits: 0 };
     function scoreHit(r, point) {
+      stats.hits++; if (r.killed) stats.kills++; if (r.blocked) stats.blocked++; if (r.weakPoint) stats.weak++;
       if (r.blocked) { fx.burst(point, 0x9a9aa8, 5); return; }
       if (!r.killed) { fx.burst(point, 0xffffff, 4); return; }
       score += r.points;
@@ -345,14 +355,15 @@
             if (!g.string.userData.restLocal) g.string.userData.restLocal = g.string.position.clone();
             _bowRest.copy(g.string.userData.restLocal).applyMatrix4(g.group.matrixWorld);
             _back.set(0, 0, 1).transformDirection(g.group.matrixWorld);
-            input.bowT = trig ? Math.min(0.8, input.bowT + dt) : 0;
+            if (trig) input.bowT = trigPrev ? Math.min(0.8, input.bowT + dt) : 0;
             drawHand.copy(_bowRest).addScaledVector(_back, def.draw.length * input.bowT / 0.8);
             drawing = trig;
+            if (!trig) input.bowT = 0; // после кадра отпускания
           }
           const rel = bowCtl.update(dt, { bow: g, drawHand, drawing });
           if (rel) {
             const r = W.bowRelease(w, rel.power);
-            if (r) { _d.copy(rel.dir); launch(_o.copy(rel.origin), _d, W.shotParams(w, r, rel.power), w.spread({ aim: 1 })); g.fire(); }
+            if (r) { stats.arrows++; _d.copy(rel.dir); if (!xr) aimAtCrosshair(rel.origin, _d); launch(_o.copy(rel.origin), _d, W.shotParams(w, r, rel.power), w.spread({ aim: 1 })); g.fire(); }
           }
         } else if (def.action === 'melee') {
           if (!xr) {
@@ -367,10 +378,10 @@
           }
           const hits = melee.update(dt, { blade: g, hittables: enemies.meshes });
           for (const h of hits) applyHit(h.object, h.point, def.swing.damage * (0.5 + h.strength), null, h.instanceId);
-          if (melee.wave && W.bladeWave(w, melee.wave.power)) slashes.spawn(melee.wave, def.wave);
+          if (melee.wave && W.bladeWave(w, melee.wave.power)) { stats.waves++; slashes.spawn(melee.wave, def.wave); }
           if (melee.tipSpeed > def.swing.minSpeed) {
             const ph = enemies.projectiles.hitTest(melee.segment.from, melee.segment.to, 0.12);
-            if (ph) { enemies.projectiles.deflect(ph.projectile, _hdir); fx.burst(ph.point, 0x7fd8ff, 12); }
+            if (ph) { stats.deflected++; enemies.projectiles.deflect(ph.projectile, _hdir); fx.burst(ph.point, 0x7fd8ff, 12); }
           }
         }
       }
@@ -379,7 +390,7 @@
       // мир
       const evs = enemies.update(dt, { headPos: _head, headDir: _hdir, timeScale });
       for (const e of evs) {
-        if (e.type === 'player-hit') { director.damagePlayer(e.damage ?? 1); hurt = 0.35; }
+        if (e.type === 'player-hit') { stats.playerHits++; director.damagePlayer(e.damage ?? 1); hurt = 0.35; }
         else if (e.type === 'killed' || e.type === 'projectile-hit') { if (e.points && (e.killed ?? true)) { score += e.points; if (e.position) fx.popup(e.position, (e.points > 0 ? '+' : '') + e.points, '#ffe27a'); } }
         else if (e.type === 'burst' && e.position) fx.burst(e.position, e.color ?? 0xffa040, 12);
         else if (e.type === 'chain') fx.tracer(e.from, e.to, 0xd8a0ff);
@@ -435,7 +446,14 @@
       spawn: (type, x, y, z) => enemies.spawn(type, x === undefined ? undefined : new THREE.Vector3(x, y, z)),
       look: (yawDeg = 0, pitchDeg = 0) => { input.yaw = yawDeg * Math.PI / 180; input.pitch = pitchDeg * Math.PI / 180; },
       async fire(ms = 60) { input.fire = true; await wait(ms); input.fire = false; await wait(50); },
-      state: () => ({
+      stats,
+      // повернуть взгляд (ПК) на точку
+      aimAt(x, y, z) {
+        const h = new THREE.Vector3(); camera.getWorldPosition(h);
+        const dx = x - h.x, dy = y - h.y, dz = z - h.z;
+        input.yaw = Math.atan2(-dx, -dz); input.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      },
+      state: () => ({ stats: { ...stats },
         weapon: arsenal.current.def.id, ready: arsenal.ready, mana: Math.round(arsenal.current.mana), element: arsenal.current.element,
         charge01: arsenal.current.charge01, draw01: bowCtl.draw01, score, hp: director.hp, mode: director.mode, running: director.running,
         wave: director.wave, enemies: enemies.count, projectiles: enemies.projectiles.list.filter?.((p) => p.alive !== false).length,
