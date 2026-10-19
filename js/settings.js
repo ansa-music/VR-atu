@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   quality: 'auto',     // 'auto' | 'high' | 'medium' | 'low'
   turn: 'snap',        // поворот в VR: 'snap' | 'smooth'
   vignette: true,      // затемнение краёв при движении в VR
+  mode: 'fantasy',     // режим в VR: 'fantasy' — «Арена магов» | 'realism' — реалистичное оружие
   vrReload: 'hands',   // 'hands' — магазин с пояса (хват тоже работает) | 'button' — кнопкой хвата
   holsters: true,      // кобуры на теле в VR
   leftHanded: false,   // оружие в левой руке
@@ -42,6 +43,7 @@ function sanitize(s) {
   s.quality = QUALITY_IDS.includes(s.quality) ? s.quality : 'auto';
   s.turn = s.turn === 'smooth' ? 'smooth' : 'snap';
   s.vignette = bool(s.vignette, D.vignette);
+  s.mode = s.mode === 'realism' ? 'realism' : 'fantasy';
   s.vrReload = s.vrReload === 'button' ? 'button' : 'hands';
   s.holsters = bool(s.holsters, D.holsters);
   s.leftHanded = bool(s.leftHanded, D.leftHanded);
@@ -279,6 +281,7 @@ export function buildSettingsUi({ qualityLabel } = {}) {
       ),
       group('Графика', qualityRows, note),
       group('VR',
+        selectRow('mode', { label: 'Режим в VR', options: [['fantasy', 'Фэнтези — «Арена магов»'], ['realism', 'Реализм — ПМ, АК, СВ-98']] }),
         selectRow('turn', { label: 'Поворот в VR', options: [['snap', 'Рывком на 45°'], ['smooth', 'Плавно']] }),
         toggleRow('vignette', { label: 'Затемнение краёв при движении' }),
         selectRow('vrReload', {

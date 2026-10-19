@@ -14,7 +14,8 @@ import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 import { QUALITY, detectQuality } from './quality.js';
 
 const { sfx } = audio;
-const music = audio.music || { start() {}, stop() {}, setIntensity() {} };
+const classicMusic = audio.music || { start() {}, stop() {}, setIntensity() {} };
+let music = classicMusic; // в фэнтези-режиме — оркестр «Арены магов»
 const emit = (name, detail) => dispatchEvent(new CustomEvent(name, { detail }));
 const sound = (name, ...args) => { try { sfx[name]?.(...args); } catch {} };
 
@@ -24,6 +25,11 @@ const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod, comfortMod, 
   load('./guns.js'), load('./character.js'), load('./graphics.js'), load('./ballistics.js'),
   load('./range.js'), load('./logo.js'), load('./hud.js'), load('./vr-comfort.js'),
   load('./settings.js'), load('./vr-holsters.js'), load('./vr-handling.js'), load('./touch.js'),
+]);
+// фэнтези-режим VR «Арена магов»
+const [fworldMod, fuiMod, fbracerMod, faudioMod, skillsMod, gesturesMod] = await Promise.all([
+  load('./fantasy/world.js'), load('./fantasy/ui.js'), load('./fantasy/bracer.js'), load('./fantasy/audio.js'),
+  load('./fantasy/skills.js'), load('./fantasy/gestures.js'),
 ]);
 // настройки игрока; если модуль не загрузился — значения по умолчанию
 const userSettings = settingsMod.settings || { sensitivity: 1, fov: 70, invertY: false, musicVolume: 0.7, sfxVolume: 1, turn: 'snap', vignette: true, vrReload: 'hands', holsters: true, leftHanded: false };
@@ -162,7 +168,8 @@ function notify(text, color) {
   else hud?.toast(text, color);
 }
 
-const board = createScoreboard();
+const classicBoard = createScoreboard();
+let board = classicBoard; // в фэнтези-режиме — каменная скрижаль
 board.mesh.position.set(0, 4.2, -7);
 scene.add(board.mesh);
 
@@ -171,7 +178,8 @@ const mkLed = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), new THREE.Me
 mkLed.position.set(1.85, 0.36, 0.02);
 board.mesh.add(mkLed);
 
-const menu = createMenu();
+const classicMenu = createMenu();
+let menu = classicMenu; // в фэнтези-режиме — скрижаль с выбором режима
 menu.mesh.position.set(0, EYE_HEIGHT, -3);
 menu.mesh.userData.readyAt = 0;
 menu.showStart(ROUND_TIME);
@@ -278,6 +286,7 @@ function setState(s) {
 
 // старт: сначала отсчёт 3-2-1, потом раунд
 function startGame() {
+  if (fantasy) skills?.reset?.();
   arsenal.resetAll();
   ballistics.clear();
   setState('countdown');
@@ -470,8 +479,9 @@ function hitTarget(t, point, controller) {
     hud?.hitMarker('bomb');
   } else {
     const m = addCombo(point, controller);
-    const pts = (u.type === 'gold' ? 3 : 1) * m;
+    const pts = Math.round((u.type === 'gold' ? 3 : 1) * m * (fantasy ? skills?.powerMul || 1 : 1));
     score += pts;
+    if (fantasy) skills?.addUlt?.(u.type === 'gold' ? 0.08 : 0.04);
     fx.burst(point, u.color, u.type === 'gold' ? 26 : 16);
     fx.shockwave?.(point, u.color);
     fx.popup(point, '+' + pts, u.type === 'gold' ? '#ffd23f' : '#ffffff');
@@ -515,13 +525,18 @@ function collectHittables() {
   if (scoring()) for (const t of targets.children) hittables.push(t);
   if (!sharedArena.active && menu.mesh.visible && state !== 'play') hittables.push(menu.mesh);
   if (pvpEnabled) return; // на «Бастионе» рубежа нет, попадания считает сервер
+  if (fantasy) {
+    for (const r of runeSet) hittables.push(r);
+    for (const c of fantasyWorld.colliders) hittables.push(c);
+    return;
+  }
   for (const p of plateSet) hittables.push(p);
   for (const c of staticColliders) hittables.push(c);
 }
 
 function kindOf(o) {
   if (o.parent === targets) return 'target';
-  if (plateSet.has(o)) return 'plate';
+  if (plateSet.has(o) || runeSet.has(o)) return 'plate';
   if (o === menu.mesh) return 'menu';
   return 'collider';
 }
@@ -546,6 +561,7 @@ function hitTest(from, dir, length, exclude) {
 // попадание пули: true — пуля летит дальше (пробитие)
 function onBulletHit(shot, hit) {
   const point = hit.point.clone();
+  if (shot.explode) { explodeAt(point, shot.explode.radius, shot.explode.power); return false; } // огненный шар
   const near = point.distanceTo(headPos) < 30;
   switch (hit.kind) {
     case 'ground':
@@ -568,7 +584,7 @@ function onBulletHit(shot, hit) {
     }
     case 'plate': {
       ballistics.spark?.(point, 'metal');
-      const res = range?.hit(hit.object, point);
+      const res = runeSet.has(hit.object) ? fantasyWorld.runes.hit(hit.object, point) : range?.hit(hit.object, point);
       const dist = res?.distance || point.distanceTo(headPos);
       sound('plateHit', point.distanceTo(headPos));
       if (!shot.hit) { shot.hit = true; if (scoring()) hits++; }
@@ -668,8 +684,12 @@ function tryShoot(first, source) {
 
   // меню: выстрел в панель запускает раунд (без расхода патронов)
   if (first && !sharedArena.active && (state === 'menu' || state === 'over') && menu.mesh.visible) {
+    // «⇄ ФЭНТЕЗИ» под обычным меню в шлеме
+    if (modeButton.visible && raycaster.intersectObject(modeButton, false)[0]) { setMode('fantasy'); vibrate(controller, 0.3, 40); return; }
     const hit = raycaster.intersectObject(menu.mesh, false)[0];
-    if (hit && performance.now() >= menu.mesh.userData.readyAt) {
+    const action = hit ? (menu.pick ? menu.pick(hit.uv) : 'start') : null;
+    if (action === 'mode-fantasy' || action === 'mode-realism') { setMode(action === 'mode-fantasy' ? 'fantasy' : 'realism'); vibrate(controller, 0.3, 40); return; }
+    if (action === 'start' && performance.now() >= menu.mesh.userData.readyAt) {
       fx.tracer(muzzlePos, hit.point, color);
       currentGun(controller)?.fire?.();
       sound('gunshot', d.id);
@@ -966,6 +986,7 @@ const offHand = () => controllers.find((k) => k !== weaponHand && k.userData.src
 // хват (grip) по приоритету: кобура → свободной рукой цевьё/подсумок/затвор → прицел или перезарядка
 function onSqueeze(c, down) {
   const u = c.userData;
+  u.gripHeld = down;
   if (!down) {
     if (u.grabbed) { handling?.release?.(c); u.grabbed = null; }
     if (c === weaponHand) vrAim = false;
@@ -976,12 +997,14 @@ function onSqueeze(c, down) {
     if (c !== weaponHand) { handling?.release?.(c); weaponHand = c; vrAim = false; }
     if (!arsenal.select(slot)) sound('draw');
     vibrate(c, 0.5, 40);
+    u.grabbed = 'holster';
     return;
   }
   if (c !== weaponHand) {
     const what = handling?.grab?.(c, { gun: handGun(weaponHand), weaponHand, weapon: arsenal.current });
     if (what === 'pouch' && userSettings.vrReload === 'button') handling.release(c);
     else if (what) { u.grabbed = what; return; }
+    if (fantasy && (gestureState?.palmUp || gestureState?.palmForward)) return; // энергосфера или барьер
     if (userSettings.vrReload !== 'hands') arsenal.current.startReload();
     return;
   }
@@ -1081,7 +1104,7 @@ function pollVrButtons() {
     const prev = c.userData.prevButtons;
     const pressed = (i) => !!b[i]?.pressed && !prev[i];
     if (src.handedness === 'right') {
-      if (pressed(4)) jumpRequested = true;
+      if (pressed(4)) { jumpRequested = true; aPressedEdge = true; }
       if (pressed(5)) arsenal.step(1);
       if (pressed(3)) arsenal.current.toggleMode();
     } else if (src.handedness === 'left') {
@@ -1099,7 +1122,7 @@ function handleTriggers() {
     for (const c of controllers) {
       const u = c.userData;
       if (!u.trigHeld && !u.trigFirst) continue;
-      if (c !== weaponHand && u.trigFirst) {
+      if (c !== weaponHand && u.trigFirst && !fantasy) {
         // курок свободной руки: перекладываем оружие в эту руку
         weaponHand = c;
         sound('draw');
@@ -1179,7 +1202,8 @@ function updateMovement(dt) {
       const axes = src?.gamepad?.axes;
       if (!axes || axes.length < 4) continue;
       const sx = axes[2], sy = axes[3];
-      if (src.handedness === 'left') {
+      if (src.handedness === 'left') { leftStick.x = sx; leftStick.y = sy; }
+      if (src.handedness === 'left' && !fantasy) {
         if (Math.abs(sx) > 0.15) move.x += sx;
         if (Math.abs(sy) > 0.15) move.y -= sy;
       } else if (src.handedness === 'right') {
@@ -1234,10 +1258,11 @@ function updateMovement(dt) {
   rig.position.x += vel.x * dt;
   rig.position.z += vel.z * dt;
   const r = pvpEnabled ? 0 : Math.hypot(rig.position.x, rig.position.z);
-  if (r > ARENA) {
+  const arenaR = fantasy ? FANTASY_ARENA : ARENA;
+  if (r > arenaR) {
     const nx = rig.position.x / r, nz = rig.position.z / r;
-    rig.position.x = nx * ARENA;
-    rig.position.z = nz * ARENA;
+    rig.position.x = nx * arenaR;
+    rig.position.z = nz * arenaR;
     const out = vel.x * nx + vel.z * nz;
     if (out > 0) { vel.x -= nx * out; vel.z -= nz * out; }
   }
@@ -1287,7 +1312,7 @@ function updateMovement(dt) {
       0,
     );
   } else {
-    rig.position.y = feet - crouchAmt * 0.5; // искусственный присед в шлеме — кнопкой X
+    rig.position.y = groundY + feet - crouchAmt * 0.5; // опора (пол или платформа) + прыжок − присед кнопкой X
   }
 }
 
@@ -1441,9 +1466,11 @@ renderer.xr.addEventListener('sessionstart', () => {
   camera.fov = deskFov();
   camera.updateProjectionMatrix();
   touch?.setVisible?.(false);
+  setFantasy(wantFantasy());
   emit('game:xr', { active: true });
 });
 renderer.xr.addEventListener('sessionend', () => {
+  setFantasy(false);
   viewModel.visible = hasGuns;
   rig.position.y = 0;
   camera.position.set(0, EYE_HEIGHT, 0);
@@ -1514,6 +1541,280 @@ function updateHud() {
   hud.update(hudInfo);
 }
 
+// ---------- фэнтези-режим «Арена магов» (только в шлеме) ----------
+// Остров вместо неоновой арены, скрижали вместо табло и меню, наруч вместо наручного экрана,
+// оркестровая музыка, мана и навыки. ПК, телефон и мультиплеер остаются в реализме.
+const FANTASY_ARENA = 15; // остров шире неоновой арены
+const fantasyWorld = safeCall(fworldMod.createFantasyWorld, scene, { quality });
+const fantasyBoard = safeCall(fuiMod.createFantasyBoard);
+const fantasyMenu = safeCall(fuiMod.createFantasyMenu);
+const bracer = safeCall(fbracerMod.createBracer);
+const gestures = safeCall(gesturesMod.createGestures, { scene });
+const playSpell = (name, opts) => { try { return faudioMod.playSpell?.(name, opts) ?? null; } catch { return null; } };
+const skills = safeCall(skillsMod.createSkills, { scene, camera, rig, quality, playSpell, fx });
+const fantasyAvailable = !!(fantasyWorld && fantasyBoard && fantasyMenu);
+const runeSet = new Set(fantasyWorld?.runes?.meshes || []);
+if (fantasyBoard) { fantasyBoard.mesh.visible = false; fantasyBoard.mesh.position.copy(classicBoard.mesh.position); scene.add(fantasyBoard.mesh); }
+if (fantasyMenu) {
+  fantasyMenu.mesh.visible = false;
+  fantasyMenu.mesh.userData.readyAt = 0;
+  fantasyMenu.mesh.position.copy(classicMenu.mesh.position);
+  scene.add(fantasyMenu.mesh);
+  fantasyMenu.showStart(ROUND_TIME, 'fantasy');
+}
+if (bracer?.group) bracer.group.visible = false;
+skills?.setVisible?.(false);
+
+let fantasy = false;      // сейчас идёт фэнтези-режим
+let groundY = 0;          // высота опоры под ногами: пол острова или верх платформы
+let hitstopT = 0;         // стоп-кадр: мир замирает на долю секунды
+let aPressedEdge = false; // кнопка A нажата в этом кадре (небесный шаг в прыжке)
+let wasDrawing = false;
+let gestureState = null;
+const leftStick = { x: 0, y: 0 };
+const headQuat = new THREE.Quaternion();
+const fxA = new THREE.Vector3();
+const fxB = new THREE.Vector3();
+
+function wantFantasy() {
+  return renderer.xr.isPresenting && fantasyAvailable && userSettings.mode !== 'realism' && !sharedArena.active;
+}
+
+// кнопка «⇄ ФЭНТЕЗИ» под обычным меню: вернуться из реализма, не снимая шлем
+const modeButton = (() => {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(20,12,48,0.92)';
+  g.beginPath(); g.roundRect(4, 4, 504, 120, 40); g.fill();
+  g.lineWidth = 6; g.strokeStyle = '#b48cff'; g.stroke();
+  g.fillStyle = '#ffd23f'; g.font = 'bold 54px system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('⇄ ФЭНТЕЗИ', 256, 66);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.225), new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false }));
+  m.visible = false;
+  scene.add(m);
+  return m;
+})();
+function updateModeButton() {
+  const show = renderer.xr.isPresenting && fantasyAvailable && !fantasy && !sharedArena.active && menu.mesh.visible && (state === 'menu' || state === 'over');
+  modeButton.visible = show;
+  if (!show) return;
+  modeButton.position.copy(menu.mesh.position);
+  modeButton.position.y -= 0.85;
+  modeButton.quaternion.copy(menu.mesh.quaternion);
+}
+
+function setMode(mode) {
+  userSettings.mode = mode === 'realism' ? 'realism' : 'fantasy';
+  settingsMod.setSetting?.('mode', userSettings.mode);
+  setFantasy(wantFantasy());
+  notify(userSettings.mode === 'fantasy' ? 'Режим: Арена магов' : 'Режим: реализм', '#b48cff');
+}
+
+function setFantasy(on) {
+  on = !!on && fantasyAvailable;
+  if (on === fantasy) return;
+  fantasy = on;
+  // мир: остров вместо неоновой арены
+  for (const obj of soloEnvironment) obj.visible = !on && !pvpEnabled;
+  fantasyWorld?.setVisible(on);
+  // табло и меню: новые встают туда, где были старые
+  const prevMenu = menu, prevBoard = board;
+  menu = on ? fantasyMenu : classicMenu;
+  board = on ? fantasyBoard : classicBoard;
+  menu.mesh.position.copy(prevMenu.mesh.position);
+  menu.mesh.quaternion.copy(prevMenu.mesh.quaternion);
+  board.mesh.position.copy(prevBoard.mesh.position);
+  board.mesh.quaternion.copy(prevBoard.mesh.quaternion);
+  menu.mesh.visible = prevMenu.mesh.visible;
+  prevMenu.mesh.visible = false;
+  prevBoard.mesh.visible = false;
+  board.mesh.visible = true;
+  menu.mesh.userData.readyAt = prevMenu.mesh.userData.readyAt || 0;
+  if (state === 'menu' || state === 'over') menu.showStart(ROUND_TIME, on ? 'fantasy' : 'realism');
+  // музыка
+  const playing = state === 'play' || state === 'countdown';
+  music.stop();
+  music = on && faudioMod.fantasyMusic ? faudioMod.fantasyMusic : classicMusic;
+  if (playing) { music.start(); music.setIntensity(lastIntensity > 0 ? lastIntensity : 0.35); }
+  // наруч вместо наручного экрана
+  for (const c of controllers) if (c.userData.wrist?.group) c.userData.wrist.group.visible = !on;
+  if (bracer?.group) bracer.group.visible = on;
+  skills?.reset?.();
+  skills?.setVisible?.(on);
+  groundY = 0; feet = 0; vy = 0; onGround = true;
+}
+
+function attachBracer() {
+  if (!bracer?.group) return;
+  const left = controllers.find((c) => c.userData.src?.handedness === 'left');
+  if (left && bracer.group.parent !== left) left.add(bracer.group);
+}
+
+// мир замедляется навыком «Ускорение восприятия» и замирает при стоп-кадре; игрок — нет
+function worldDt(dt) {
+  if (hitstopT > 0) { hitstopT -= dt; return 0; }
+  return fantasy && skills ? dt * skills.timeScale : dt;
+}
+
+// опора под ногами: верх платформы или пол острова; сошёл с края — падаешь
+function supportAt(x, z) {
+  let h = 0;
+  for (const p of fantasyWorld?.platforms || []) {
+    const dx = x - p.position.x, dz = z - p.position.z, r = p.radius + 0.25;
+    if (dx * dx + dz * dz <= r * r) h = Math.max(h, p.position.y);
+  }
+  return h;
+}
+function updateSupport() {
+  const sup = supportAt(headPos.x, headPos.z);
+  if (sup < groundY - 0.05) {
+    feet += groundY - sup;
+    groundY = sup;
+    onGround = false;
+  }
+}
+
+// перенос игрока: голова встаёт над точкой, опора — её высота
+function moveHeadTo(p) {
+  rig.position.x += p.x - headPos.x;
+  rig.position.z += p.z - headPos.z;
+  groundY = p.y;
+  feet = 0; vy = 0; onGround = true;
+  vel.set(0, 0, 0);
+  updateHead();
+}
+
+const skillHitTest = (from, dir, len) => hitTest(from, dir, len, null);
+
+// урон навыками: по области, лучом, цепной молнией
+function damageArea(point, radius) {
+  if (!scoring()) return 0;
+  let n = 0;
+  for (let i = targets.children.length - 1; i >= 0; i--) {
+    const t = targets.children[i];
+    if (t.position.distanceTo(point) <= radius + t.userData.radius) { hitTarget(t, t.position.clone(), null); n++; }
+  }
+  if (n) hits++;
+  return n;
+}
+function explodeAt(point, radius, power = 1) {
+  fx.shockwave?.(point, 0x8fd8ff);
+  fx.burst(point, 0x9fe7ff, Math.round(14 + 14 * power));
+  playSpell('enemy-die', { distance: point.distanceTo(headPos) });
+  if (damageArea(point, radius)) hitstopT = Math.max(hitstopT, 0.06);
+}
+function beamDamage(origin, dir, length, radius) {
+  if (!scoring()) return;
+  let n = 0;
+  for (let i = targets.children.length - 1; i >= 0; i--) {
+    const t = targets.children[i];
+    fxA.subVectors(t.position, origin);
+    const along = fxA.dot(dir);
+    if (along < 0 || along > length) continue;
+    const r = radius + t.userData.radius;
+    if (fxA.lengthSq() - along * along <= r * r) { hitTarget(t, t.position.clone(), null); n++; }
+  }
+  if (n) { hits++; hitstopT = Math.max(hitstopT, 0.08); }
+}
+const chainList = [];
+const chainPoints = [];
+function chainLightning(origin, dir) {
+  chainList.length = 0;
+  if (scoring()) {
+    for (const t of targets.children) {
+      if (t.userData.type === 'bomb') continue; // молния обходит проклятых
+      fxA.subVectors(t.position, origin);
+      const d = fxA.length();
+      if (d < 25 && fxA.dot(dir) / d > Math.cos(toRad(35))) chainList.push(t);
+    }
+    chainList.sort((a, b) => a.position.distanceToSquared(origin) - b.position.distanceToSquared(origin));
+    chainList.length = Math.min(chainList.length, 4);
+  }
+  chainPoints.length = 0;
+  chainPoints.push(origin.clone());
+  for (const t of chainList) chainPoints.push(t.position.clone());
+  if (chainPoints.length === 1) chainPoints.push(fxB.copy(origin).addScaledVector(dir, 8).clone());
+  skills?.drawLightning?.(chainPoints);
+  for (const t of chainList) hitTarget(t, t.position.clone(), null);
+  if (chainList.length) { hits++; hitstopT = Math.max(hitstopT, 0.06); }
+}
+function spawnFireball(origin, dir, power = 0.8) {
+  ballistics.fire({
+    origin, dir, speed: 24, drag: 0, gravity: 0, penetration: 0, visualFrom: origin,
+    color: 0xff7a2a, tracer: true, bolt: true, maxRange: 90,
+    shot: { pending: 1, hit: false, kills: 0, round: false, controller: null, explode: { radius: 1.8, power } },
+  });
+  playSpell('fireball');
+}
+
+const RUNE_NAMES = { circle: 'Руна щита', triangle: 'Огненный шар', zigzag: 'Молния', spiral: 'Мана восстановлена' };
+function onSkillEvent(e) {
+  switch (e.type) {
+    case 'teleport': moveHeadTo(e.to); break;
+    case 'dash':
+      rig.position.x += e.delta.x;
+      rig.position.z += e.delta.z;
+      updateHead();
+      break;
+    case 'sky-step': vy = Math.sqrt(2 * MOVE.gravity * 0.9); onGround = false; break;
+    case 'explosion': explodeAt(e.point, e.radius, e.power); break;
+    case 'beam': beamDamage(e.origin, e.dir, e.length, e.radius); break;
+    case 'fireball': spawnFireball(e.origin, e.dir, e.power); break;
+    case 'lightning': chainLightning(e.origin, e.dir); break;
+    case 'hitstop': hitstopT = Math.max(hitstopT, (e.ms || 60) / 1000); break;
+    case 'slowmo': if (e.active) notify('УСКОРЕНИЕ ВОСПРИЯТИЯ', '#b48cff'); break;
+    case 'ult': if (e.active) notify('ПРОБУЖДЕНИЕ!', '#ffd23f'); break;
+    case 'rune': if (RUNE_NAMES[e.name]) notify(RUNE_NAMES[e.name], '#9fe7ff'); break;
+  }
+}
+
+function updateFantasy(dt) {
+  if (!fantasy) { aPressedEdge = false; return; }
+  attachBracer();
+  camera.getWorldQuaternion(headQuat);
+  const off = offHand();
+  gestureState = gestures?.update?.(dt, {
+    weaponHand, offHand: off, headPos, headQuat, offTrigger: !!off?.userData.trigHeld,
+    bracerTouchPoint: bracer?.group?.userData.touchPoint || null, enabled: true,
+  }) || null;
+  const runeFailed = !!(wasDrawing && gestureState && !gestureState.drawing && !gestureState.rune);
+  wasDrawing = !!gestureState?.drawing;
+  if (skills) {
+    const events = skills.update(dt, {
+      enabled: true, headPos, headQuat, weaponHand, offHand: off, leftStick,
+      grips: { weapon: !!weaponHand?.userData.gripHeld, off: !!off?.userData.gripHeld && !off.userData.grabbed },
+      triggers: { weapon: !!weaponHand?.userData.trigHeld, off: !!off?.userData.trigHeld },
+      jumpPressed: aPressedEdge, airborne: !onGround, gestures: gestureState, runeFailed,
+      teleportSurfaces: fantasyWorld.teleportSurfaces, blockers: fantasyWorld.colliders, arenaRadius: FANTASY_ARENA,
+      hitTest: skillHitTest,
+    });
+    for (const e of events || []) onSkillEvent(e);
+  }
+  aPressedEdge = false;
+  updateSupport();
+}
+
+// наруч: мана, навыки, ульта, оружие, очки, FPS
+const bracerInfo = { mana: 0, maxMana: 100, skills: [], ult01: 0, score: 0, timeLeft: 0, weapon: { name: '', mana01: 1 }, fps: 0 };
+function updateBracer() {
+  if (!bracer || !fantasy) return;
+  const w = arsenal.current;
+  bracerInfo.mana = skills ? Math.round(skills.mana) : 0;
+  bracerInfo.maxMana = skills?.maxMana ?? 100;
+  bracerInfo.skills = skills?.skillsInfo?.() || bracerInfo.skills;
+  bracerInfo.ult01 = skills?.ult01 ?? 0;
+  bracerInfo.score = score;
+  bracerInfo.timeLeft = timeLeft;
+  bracerInfo.weapon.name = w.def.short || w.def.name;
+  bracerInfo.weapon.mana01 = w.energy ? 1 - w.heat : (w.mag + w.chamber) / (w.def.mag + 1);
+  bracerInfo.fps = Math.round(1 / Math.max(1e-3, frameStats.ema));
+  bracer.update(bracerInfo);
+}
+
 // ---------- динамическое качество ----------
 // долгие просадки: на ПК снижаем разрешение, в шлеме усиливаем фовеальный рендер; запас — возвращаем
 const frameStats = {
@@ -1553,6 +1854,11 @@ function warmup() {
   for (const g of Object.values(pcGuns)) g.group.visible = true;
   try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
   syncGunVisibility();
+  if (fantasyWorld) {
+    fantasyWorld.setVisible(true);
+    try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
+    fantasyWorld.setVisible(false);
+  }
 }
 applySettings();
 warmup();
@@ -1565,6 +1871,7 @@ renderer.setAnimationLoop(() => {
   const time = clock.elapsedTime;
   const xr = renderer.xr.isPresenting;
   frameStats.update(raw);
+  const wdt = worldDt(dt); // мир медленнее при «Ускорении восприятия», стоит при стоп-кадре
 
   updateHead();
   if (xr) pollVrButtons();
@@ -1606,12 +1913,13 @@ renderer.setAnimationLoop(() => {
   if (arsenal.current.def.id !== lastWeaponId) { lastWeaponId = arsenal.current.def.id; syncGunVisibility(); aimAmt = 0; }
   if (xr) syncGunVisibility();
   if (xr) updateVrHands(dt);
+  if (xr) updateFantasy(dt);
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
 
   // полёт пуль
   collectHittables();
-  ballistics.update(dt, hitTest, onBulletHit, onBulletEnd);
+  ballistics.update(wdt, hitTest, onBulletHit, onBulletEnd);
 
   if (state === 'countdown') updateCountdown(dt);
 
@@ -1633,11 +1941,13 @@ renderer.setAnimationLoop(() => {
     if (timeLeft <= 0) { timeLeft = 0; endGame(); }
   }
 
-  updateTargets(dt, time);
-  fx.update(dt);
+  updateTargets(wdt, time);
+  fx.update(wdt);
   env.update(dt, time);
   range?.update?.(dt, time);
   logo?.update?.(dt, time);
+  if (fantasy) fantasyWorld.update(wdt, time);
+  updateModeButton();
   gfx?.update?.(dt, time);
   updateControllers();
   updateViewModel(dt);
@@ -1686,8 +1996,9 @@ function updateCharacter(dt) {
     const u = c.userData;
     if (!c.visible) continue;
     u.hand?.update?.(dt);
-    u.wrist?.update?.(wristInfo);
+    if (!fantasy) u.wrist?.update?.(wristInfo);
   }
+  updateBracer();
   if (shadowBlob) shadowBlob.position.set(headPos.x, 0.012, headPos.z);
 }
 
@@ -1699,6 +2010,10 @@ if (/[?&]debug\b/.test(location.search)) {
     fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
     select(i) { arsenal.select(i); },
     get touch() { return touch; },
+    get fantasy() { return { active: fantasy, mode: userSettings.mode, mana: skills?.mana, ult: skills?.ult01, timeScale: skills?.timeScale, groundY, menu: menu === fantasyMenu ? 'fantasy' : 'classic', modeButton: modeButton.visible }; },
+    setMode(m) { setMode(m); },
+    teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y, z)); },
+    skillEvent(e) { onSkillEvent(e); },
     get holsters() { return holsters; },
     get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
