@@ -31,6 +31,10 @@ const [fworldMod, fuiMod, fbracerMod, faudioMod, skillsMod, gesturesMod] = await
   load('./fantasy/world.js'), load('./fantasy/ui.js'), load('./fantasy/bracer.js'), load('./fantasy/audio.js'),
   load('./fantasy/skills.js'), load('./fantasy/gestures.js'),
 ]);
+const [wpnMod, fmodelsMod, bowMod, meleeMod, enemiesMod, wavesMod] = await Promise.all([
+  load('./fantasy/weapons.js'), load('./fantasy/models.js'), load('./fantasy/bow.js'),
+  load('./fantasy/melee.js'), load('./fantasy/enemies.js'), load('./fantasy/waves.js'),
+]);
 // настройки игрока; если модуль не загрузился — значения по умолчанию
 const userSettings = settingsMod.settings || { sensitivity: 1, fov: 70, invertY: false, musicVolume: 0.7, sfxVolume: 1, turn: 'snap', vignette: true, vrReload: 'hands', holsters: true, leftHanded: false };
 const deskFov = () => THREE.MathUtils.clamp(Number(userSettings.fov) || 70, 60, 100);
@@ -203,7 +207,8 @@ addEventListener('mp:status', e => {
 });
 
 // ---------- оружие ----------
-const arsenal = new Arsenal(WEAPONS);
+const classicArsenal = new Arsenal(WEAPONS);
+let arsenal = classicArsenal; // в фэнтези-бою — жезл, посох, клинок, лук, перчатка
 const breath = new Breath();
 const SLOTS = WEAPONS.map((d) => ({ slot: d.slot, name: d.short || d.name }));
 const ballistics = safeCall(ballMod.createBallistics, scene, {
@@ -316,6 +321,7 @@ function updateCountdown(dt) {
   }
   if (countdown <= 0) {
     setState('play');
+    if (combatOn) startCombat();
     (sfx.go || sfx.start)();
     goHide = 0.6; // «ВПЕРЁД!» висит ещё чуть-чуть
   }
@@ -329,6 +335,7 @@ function loadTop() {
 }
 
 function endGame() {
+  if (combatOn) { director.stop(); enemies.clear(); }
   setState('over');
   clearTargets();
   music.stop();
@@ -344,7 +351,7 @@ function endGame() {
     try { localStorage.setItem('vr-tir-top', JSON.stringify(top)); } catch {}
   }
   const accuracy = shots ? Math.round((hits / shots) * 100) : 0;
-  menu.showResults({ score, best, accuracy, newRecord, top, maxCombo });
+  menu.showResults({ score, best, accuracy, newRecord, top, maxCombo, wave: combatOn && director?.mode === 'waves' ? director.wave : undefined });
   menu.mesh.visible = true;
   menu.mesh.userData.readyAt = performance.now() + 1200; // защита от случайного рестарта
   sfx.end();
@@ -526,6 +533,7 @@ function collectHittables() {
   if (!sharedArena.active && menu.mesh.visible && state !== 'play') hittables.push(menu.mesh);
   if (pvpEnabled) return; // на «Бастионе» рубежа нет, попадания считает сервер
   if (fantasy) {
+    if (combatOn) for (const m of enemies.meshes) hittables.push(m);
     for (const r of runeSet) hittables.push(r);
     for (const c of fantasyWorld.colliders) hittables.push(c);
     return;
@@ -535,27 +543,44 @@ function collectHittables() {
 }
 
 function kindOf(o) {
+  if (enemyMeshSet.has(o)) return 'enemy';
   if (o.parent === targets) return 'target';
   if (plateSet.has(o) || runeSet.has(o)) return 'plate';
   if (o === menu.mesh) return 'menu';
   return 'collider';
 }
 
-const hitResult = { object: null, point: new THREE.Vector3(), distance: 0, kind: '' };
+const hitResult = { object: null, point: new THREE.Vector3(), distance: 0, kind: '', instanceId: undefined, projectile: null };
+const hitTo = new THREE.Vector3();
 function hitTest(from, dir, length, exclude) {
   bulletRay.set(from, dir);
   bulletRay.near = 0;
   bulletRay.far = length;
   const list = bulletRay.intersectObjects(hittables, false);
+  let best = null;
   for (const h of list) {
     if (exclude && exclude.has(h.object)) continue;
+    if (!h.object.visible) continue;
     hitResult.object = h.object;
     hitResult.point.copy(h.point);
     hitResult.distance = h.distance;
     hitResult.kind = kindOf(h.object);
-    return hitResult;
+    hitResult.instanceId = h.instanceId;
+    hitResult.projectile = null;
+    best = hitResult;
+    break;
   }
-  return null;
+  if (combatOn) {
+    // огненные шары противников можно сбить
+    hitTo.copy(from).addScaledVector(dir, length);
+    const ph = enemies.projectiles.hitTest(from, hitTo, 0.08);
+    if (ph && (!best || ph.distance < best.distance)) {
+      hitResult.object = null; hitResult.point.copy(ph.point); hitResult.distance = ph.distance;
+      hitResult.kind = 'fireball'; hitResult.instanceId = undefined; hitResult.projectile = ph.projectile;
+      best = hitResult;
+    }
+  }
+  return best;
 }
 
 // попадание пули: true — пуля летит дальше (пробитие)
@@ -600,6 +625,18 @@ function onBulletHit(shot, hit) {
         mk.send('G');
         vibrate(shot.controller, 0.5, 60);
       }
+      return false;
+    }
+    case 'fireball':
+      enemies.projectiles.destroy(hit.projectile);
+      fx.burst(point, 0xffa040, 10);
+      playSpell('barrier-hit', { volume: 0.6 });
+      return false;
+    case 'enemy': {
+      const r = enemies.hit(hit.object, point, { damage: shot.damage ?? 1, element: shot.element ?? null, instanceId: hit.instanceId });
+      if (r && !r.blocked && !shot.hit && scoring()) { shot.hit = true; hits++; }
+      scoreEnemy(r, point, shot.controller);
+      if (shot.radius > 0) enemyExplode(point, shot.radius, (shot.damage ?? 1) * 0.6, shot.element);
       return false;
     }
     case 'menu':
@@ -686,6 +723,7 @@ function tryShoot(first, source) {
   if (first && !sharedArena.active && (state === 'menu' || state === 'over') && menu.mesh.visible) {
     // «⇄ ФЭНТЕЗИ» под обычным меню в шлеме
     if (modeButton.visible && raycaster.intersectObject(modeButton, false)[0]) { setMode('fantasy'); vibrate(controller, 0.3, 40); return; }
+    if (combatModeButton.visible && raycaster.intersectObject(combatModeButton, false)[0]) { cycleCombatMode(); vibrate(controller, 0.3, 40); return; }
     const hit = raycaster.intersectObject(menu.mesh, false)[0];
     const action = hit ? (menu.pick ? menu.pick(hit.uv) : 'start') : null;
     if (action === 'mode-fantasy' || action === 'mode-realism') { setMode(action === 'mode-fantasy' ? 'fantasy' : 'realism'); vibrate(controller, 0.3, 40); return; }
@@ -699,8 +737,14 @@ function tryShoot(first, source) {
     }
   }
 
+  if (combatOn && (d.action === 'bow' || d.action === 'melee')) return; // лук и клинок — отдельно
   const r = w.pull(first);
   if (!r) return;
+  if (w.manaFed) {
+    if (r.dry) { if (w.startReload()) notify('Мана восполняется…', '#9fe7ff'); return; }
+    if (r.shot) fireSpell(w, r, controller);
+    return;
+  }
   if (r.dry) {
     if (!w.startReload() && w.reserve <= 0) notify('НЕТ ПАТРОНОВ', '#ff5a6e');
     return;
@@ -752,6 +796,7 @@ function tryShoot(first, source) {
 
 // звук, гильзы и подсказки по событиям оружия
 function handleWeaponEvent(w, e) {
+  if (w.manaFed) { fantasyWeaponEvent(e); return; }
   const d = w.def;
   const isCurrent = w === arsenal.current;
   switch (e.type) {
@@ -953,12 +998,14 @@ const controllers = [0, 1].map((i) => {
   });
   c.addEventListener('selectstart', () => {
     // фэнтези: курок свободной руки рисует руну, у руки с оружием — ульта
-    if (fantasy && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
+    const bowString = combatOn && c !== weaponHand && arsenal.current.def.action === 'bow'; // курок свободной руки — тетива
+    if (fantasy && !bowString && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
     c.userData.trigHeld = true; c.userData.trigFirst = true;
   });
   c.addEventListener('selectend', () => {
     c.userData.trigHeld = false;
     if (c.userData.skillTrig) { c.userData.skillTrig = false; skills?.onTrigger?.(c, false); }
+    else if (c === weaponHand) c.userData.trigReleased = true; // заряженный выстрел жезла
   });
   c.addEventListener('squeezestart', () => onSqueeze(c, true));
   c.addEventListener('squeezeend', () => onSqueeze(c, false));
@@ -1000,7 +1047,7 @@ function onSqueeze(c, down) {
     if (c === weaponHand) vrAim = false;
     return;
   }
-  const slot = userSettings.holsters !== false ? holsters?.zoneOf?.(c) ?? -1 : -1;
+  const slot = userSettings.holsters !== false ? curHolsters()?.zoneOf?.(c) ?? -1 : -1;
   if (slot >= 0) {
     if (c !== weaponHand) { handling?.release?.(c); weaponHand = c; vrAim = false; }
     if (!arsenal.select(slot)) sound('draw');
@@ -1008,6 +1055,7 @@ function onSqueeze(c, down) {
     u.grabbed = 'holster';
     return;
   }
+  if (c !== weaponHand && combatOn && arsenal.current.def.action === 'bow') return; // хват свободной руки — тетива
   if (c !== weaponHand && fantasy) {
     // ладонь вверх — энергосфера, ладонь вперёд — барьер; иначе перезарядка кнопкой
     if (skills?.onSqueeze?.(c, true)) u.skill = true;
@@ -1026,7 +1074,7 @@ function onSqueeze(c, down) {
 
 // каждый кадр в шлеме: кобуры и действия свободной руки
 function updateVrHands(dt) {
-  holsters?.update?.(dt, { controllers, current: arsenal.index, weaponHand, enabled: userSettings.holsters !== false });
+  curHolsters()?.update?.(dt, { controllers, current: arsenal.index, weaponHand, enabled: userSettings.holsters !== false });
   if (!handling) return;
   const events = handling.update(dt, {
     gun: handGun(weaponHand), weaponHand, offHand: offHand(), weapon: arsenal.current,
@@ -1078,7 +1126,7 @@ addEventListener('skin:changed', e => applySelectedSkin(e.detail?.skin));
 
 viewModel.visible = hasGuns;
 const pcGun = () => pcGuns[arsenal.current.def.id];
-const handGun = (c) => c?.userData.guns?.[arsenal.current.def.id] || null;
+const handGun = (c) => (combatOn ? c?.userData.fguns : c?.userData.guns)?.[arsenal.current.def.id] || null;
 const currentGun = (controller) => (controller ? handGun(controller) : renderer.xr.isPresenting ? handGun(weaponHand) : pcGun());
 
 // показываем только текущее оружие и только в нужной руке
@@ -1087,7 +1135,8 @@ function syncGunVisibility() {
   for (const [gid, g] of Object.entries(pcGuns)) g.group.visible = gid === id;
   for (const c of controllers) {
     const mine = c === weaponHand;
-    for (const [gid, g] of Object.entries(c.userData.guns || {})) g.group.visible = mine && gid === id;
+    for (const [gid, g] of Object.entries(c.userData.guns || {})) g.group.visible = mine && gid === id && !combatOn;
+    for (const [gid, g] of Object.entries(c.userData.fguns || {})) g.group.visible = mine && gid === id && combatOn;
     if (c.userData.fallback) c.userData.fallback.visible = mine;
   }
 }
@@ -1118,7 +1167,13 @@ function pollVrButtons() {
     const pressed = (i) => !!b[i]?.pressed && !prev[i];
     if (src.handedness === 'right') {
       if (pressed(4)) jumpRequested = true;
-      if (pressed(5)) arsenal.step(1);
+      if (pressed(5)) {
+        if (combatOn && arsenal.current.def.elements) {
+          // посох: огонь → лёд → молния
+          const el = wpnMod.nextElement?.(arsenal.current);
+          if (el) handGun(weaponHand)?.setElement?.(el);
+        } else arsenal.step(1);
+      }
       if (pressed(3)) arsenal.current.toggleMode();
     } else if (src.handedness === 'left') {
       if (pressed(4)) vrCrouch = !vrCrouch;
@@ -1134,6 +1189,7 @@ function handleTriggers() {
   if (renderer.xr.isPresenting) {
     for (const c of controllers) {
       const u = c.userData;
+      if (u.trigReleased) { u.trigReleased = false; if (combatOn && c === weaponHand) releaseSpell(c); }
       if (!u.trigHeld && !u.trigFirst) continue;
       if (c !== weaponHand && u.trigFirst && !fantasy) {
         // курок свободной руки: перекладываем оружие в эту руку
@@ -1652,6 +1708,7 @@ function setFantasy(on) {
   skills?.setEnabled?.(on);
   if (on) skills?.reset?.();
   groundY = 0; feet = 0; vy = 0; onGround = true;
+  setCombat(on);
 }
 
 function attachBracer() {
@@ -1741,13 +1798,13 @@ const skills = safeCall(skillsMod.createSkills, {
     teleport: (p) => moveHeadTo(p),
     skyJump() { vy = Math.sqrt(2 * MOVE.gravity * 0.8); onGround = false; },
     blink() { comfort?.onSnapTurn?.(); },
-    damageSphere: (c, r) => skillDamage((p, rad) => p.distanceTo(c) < r + rad),
-    damageRay: (o, d, len, r) => skillDamage((p, rad) => rayDist(o, d, len, p) < r + rad),
-    lightning: skillLightning,
+    damageSphere: (c, r) => (combatOn ? enemyExplode(c, r, 3 * (skills?.power || 1), 'rune') : skillDamage((p, rad) => p.distanceTo(c) < r + rad)),
+    damageRay: (o, d, len, r) => (combatOn ? enemyRay(o, d, len, r) : skillDamage((p, rad) => rayDist(o, d, len, p) < r + rad)),
+    lightning: (o, d, n, range) => (combatOn ? enemyLightning(o, d, n, range) : skillLightning(o, d, n, range)),
     hitTest: (from, dir, len) => hitTest(from, dir, len, null),
     hitstop(sec) { hitstopT = Math.max(hitstopT, Math.min(0.08, sec)); },
     sound: playSpell, notify, vibrate,
-    projectiles: () => null, // снаряды противников подключит аккаунт 3
+    projectiles: () => (combatOn ? enemies?.projectiles || null : null),
     surfaces: () => ({ radius: FANTASY_ARENA, platforms: fantasyWorld?.platforms || [] }),
   },
 });
@@ -1780,9 +1837,283 @@ function updateBracer() {
   bracerInfo.score = score;
   bracerInfo.timeLeft = timeLeft;
   bracerInfo.weapon.name = w.def.short || w.def.name;
-  bracerInfo.weapon.mana01 = w.energy ? 1 - w.heat : (w.mag + w.chamber) / (w.def.mag + 1);
+  bracerInfo.weapon.mana01 = w.manaFed ? w.mana01 : w.energy ? 1 - w.heat : (w.mag + w.chamber) / (w.def.mag + 1);
   bracerInfo.fps = Math.round(1 / Math.max(1e-3, frameStats.ema));
   bracer.update(bracerInfo);
+}
+
+// ---------- бой «Арены магов»: фэнтези-оружие, противники, волны ----------
+const fantasyArsenal = safeCall(wpnMod.createFantasyArsenal);
+const enemies = safeCall(enemiesMod.createEnemies, scene, { quality });
+const director = enemies ? safeCall(wavesMod.createWaveDirector, enemies, { roundTime: ROUND_TIME }) : null;
+const bowCtl = safeCall(bowMod.createBowController);
+const melee = safeCall(meleeMod.createMelee);
+const slashes = safeCall(meleeMod.createSlashWaves, scene, { quality });
+const COMBAT_MODES = wavesMod.MODES || [{ id: 'trial', name: 'Испытание духов' }];
+const combatReady = !!(fantasyArsenal && enemies && director && fmodelsMod.createFantasyGun);
+let combatOn = false;   // в руках фэнтези-оружие, вместо кристаллов — противники
+let combatModeIdx = 0;
+let bowWasNocked = false;
+enemies?.setVisible?.(false);
+const enemyMeshSet = new Set();
+const ENEMY_COLORS = { wisp: 0xbfefff, fairy: 0xffd34a, skull: 0xb05cff, guardian: 0x7fd8ff, eye: 0xff8a3a, boss: 0xff5a1f };
+// кобуры фэнтези-оружия: те же места, свои названия
+const fantasyHolsters = combatReady ? safeCall(holsterMod.createVrHolsters, { camera, rig, slots: [
+  { index: 0, name: 'Жезл', place: 'hip-right' }, { index: 4, name: 'Перчатка', place: 'hip-left' },
+  { index: 1, name: 'Посох', place: 'shoulder-right' }, { index: 3, name: 'Лук', place: 'shoulder-left' },
+  { index: 2, name: 'Клинок', place: 'back' },
+] }) : null;
+const curHolsters = () => (combatOn && fantasyHolsters ? fantasyHolsters : holsters);
+
+function buildFantasyGunSet(parent) {
+  const set = {};
+  for (const d of wpnMod.FANTASY_WEAPONS || []) {
+    // процедурные модели: у GLB-лука не натягивается тетива
+    const g = safeCall(fmodelsMod.createFantasyGun, d.id, { color: d.color, quality, glb: false });
+    if (!g?.group) continue;
+    g.group.visible = false;
+    parent.add(g.group);
+    set[d.id] = g;
+  }
+  return set;
+}
+function ensureFantasyGuns() {
+  for (const c of controllers) if (c.userData.src && !c.userData.fguns) c.userData.fguns = buildFantasyGunSet(c);
+}
+
+function setCombat(on) {
+  on = !!on && combatReady;
+  if (on === combatOn) return;
+  combatOn = on;
+  arsenal = on ? fantasyArsenal : classicArsenal;
+  if (on) ensureFantasyGuns();
+  melee?.reset?.();
+  bowCtl?.cancel?.();
+  director?.stop?.();
+  enemies?.clear?.();
+  enemies?.setVisible?.(on);
+  enemyMeshSet.clear();
+  if (on) { for (const m of enemies.meshes) enemyMeshSet.add(m); clearTargets(); }
+  lastWeaponId = null;
+}
+
+function startCombat() {
+  const mode = COMBAT_MODES[combatModeIdx]?.id || 'trial';
+  director.start(mode);
+  enemies.setVisible(true);
+}
+
+// кнопка выбора режима боя под скрижалью меню
+const combatModeButton = (() => {
+  const c = document.createElement('canvas');
+  c.width = 768; c.height = 128;
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.225), new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false }));
+  m.visible = false;
+  m.userData.draw = () => {
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 768, 128);
+    g.fillStyle = 'rgba(20,12,48,0.92)';
+    g.beginPath(); g.roundRect(4, 4, 760, 120, 40); g.fill();
+    g.lineWidth = 6; g.strokeStyle = '#ffd23f'; g.stroke();
+    g.fillStyle = '#ffe9a8'; g.font = 'bold 50px system-ui, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('⚔ ' + (COMBAT_MODES[combatModeIdx]?.name || 'Испытание духов') + '  ⇄', 384, 66);
+    tex.needsUpdate = true;
+  };
+  m.userData.draw();
+  scene.add(m);
+  return m;
+})();
+function updateCombatModeButton() {
+  const show = combatOn && menu.mesh.visible && (state === 'menu' || state === 'over');
+  combatModeButton.visible = show;
+  if (!show) return;
+  combatModeButton.position.copy(menu.mesh.position);
+  combatModeButton.position.y -= 0.85;
+  combatModeButton.quaternion.copy(menu.mesh.quaternion);
+}
+function cycleCombatMode() {
+  combatModeIdx = (combatModeIdx + 1) % COMBAT_MODES.length;
+  combatModeButton.userData.draw();
+  notify('Бой: ' + COMBAT_MODES[combatModeIdx].name, '#ffd23f');
+}
+
+// выстрел заклинанием: рассеивание, снаряд по баллистике, противники уворачиваются
+const spellDir = new THREE.Vector3();
+function launchSpell(origin, dir, p, halfDeg, controller) {
+  if (halfDeg > 0) {
+    basisFor(dir);
+    const [a, b] = sampleSpread(halfDeg);
+    dir.addScaledVector(basisX, a).addScaledVector(basisY, b).normalize();
+  }
+  const shot = { pending: 1, hit: false, kills: 0, round: scoring(), controller, damage: p.damage, element: p.element, radius: p.radius || 0 };
+  if (shot.round) shots++;
+  ballistics.fire({
+    origin, dir, speed: p.speed, drag: p.drag ?? 0, gravity: p.gravity ?? 0, penetration: p.penetration ?? 0,
+    visualFrom: origin, color: p.color, tracer: !p.bolt, bolt: !!p.bolt, maxRange: p.maxRange ?? 200, shot,
+  });
+  enemies?.threat?.(origin, dir);
+}
+function fireSpell(w, r, controller) {
+  spellDir.copy(raycaster.ray.direction);
+  launchSpell(muzzlePos, spellDir, wpnMod.shotParams(w, r), w.spread({ aim: Math.max(aimAmt, 0.6) }), controller);
+  currentGun(controller)?.fire?.();
+  playSpell(r.charge ? 'cast-orb' : 'cast-bolt');
+  vibrate(controller, 0.35, 40);
+}
+// отпускание курка: заряженный выстрел жезла
+function releaseSpell(c) {
+  const w = arsenal.current;
+  if (!w.manaFed || !arsenal.ready || !w.release) return;
+  aimRay({ controller: c });
+  const r = w.release();
+  if (r?.shot) fireSpell(w, r, c);
+}
+
+// очки за противников
+function addScore(points, point, controller, type, weak) {
+  if (!scoring()) return;
+  if (points < 0) {
+    score = Math.max(0, score + points);
+    combo = 0; lastMult = 1;
+    fx.popup(point, String(points), '#ff5a7a');
+    playSpell('skull');
+    mk.send('B');
+    vibrate(controller, 1, 200);
+    return;
+  }
+  const m = addCombo(point, controller);
+  const pts = Math.round(points * m * (skills?.power || 1));
+  score += pts;
+  skills?.addCharge?.(points >= 5 ? 3 : 1);
+  fx.burst(point, ENEMY_COLORS[type] ?? 0xffe27a, 18);
+  fx.popup(point, '+' + pts + (weak ? ' руна!' : ''), '#ffe27a');
+  playSpell(type === 'fairy' ? 'fairy' : 'enemy-die');
+  mk.send(points >= 3 ? 'G' : 'H');
+  vibrate(controller, 0.7, 70);
+}
+function scoreEnemy(r, point, controller) {
+  if (!r || !scoring()) return;
+  if (r.blocked) { fx.burst(point, 0x9a9aa8, 5); playSpell('barrier-hit', { volume: 0.5 }); return; }
+  if (!r.killed) { fx.burst(point, 0xffffff, 4); playSpell('enemy-hit'); vibrate(controller, 0.4, 30); return; }
+  addScore(r.points, point, controller, r.type, r.weakPoint);
+}
+// урон навыками по противникам
+function enemyExplode(center, radius, damage, element) {
+  const res = enemies?.explode?.(center, radius, { damage, element });
+  let n = 0;
+  if (res) for (const r of res) { scoreEnemy(r, r.position || center, weaponHand); if (r.killed) n++; }
+  return n;
+}
+function enemyRay(o, d, len, r) {
+  let n = 0;
+  const step = Math.max(1, r * 1.5);
+  for (let t = step * 0.5; t < Math.min(len, 60); t += step) n += enemyExplode(fxA.copy(o).addScaledVector(d, t), r, 2 * (skills?.power || 1), 'rune');
+  return n;
+}
+function enemyLightning(o, d, count, range) {
+  const c = fxB.copy(o).addScaledVector(d, Math.min(range, 10) * 0.5);
+  const res = enemies?.explode?.(c, 4, { damage: 2, element: 'lightning' }) || [];
+  const pts = [];
+  for (const r of res.slice(0, count)) {
+    scoreEnemy(r, r.position || c, weaponHand);
+    if (r.position) pts.push(r.position.clone());
+  }
+  return pts;
+}
+
+// звуки и подсказки по событиям фэнтези-оружия
+function fantasyWeaponEvent(e) {
+  switch (e.type) {
+    case 'dry': playSpell('rune-fail'); break;
+    case 'mana-empty': notify('Мана оружия кончилась — левый хват', '#9fe7ff'); break;
+    case 'charge-start': playSpell('charge', { volume: 0.6 }); break;
+    case 'charge-full': vibrate(weaponHand, 0.3, 30); break;
+    case 'reload-start': case 'mana-restore': playSpell('mana-restore'); break;
+    case 'element-switch': playSpell('element-switch', { element: e.element }); break;
+  }
+}
+
+function onEnemyEvent(e) {
+  switch (e.type) {
+    case 'fireball': playSpell('fireball', { distance: e.origin ? e.origin.distanceTo(headPos) : 10 }); break;
+    case 'charge': playSpell('charge', { volume: 0.5 }); break;
+    case 'player-hit': {
+      const hp = director.damagePlayer(e.damage ?? 1);
+      for (const c of controllers) vibrate(c, 1, 120);
+      notify(`♥ ${hp} / ${director.maxHp}`, '#ff5a6e');
+      playSpell('enemy-hit');
+      combo = 0; lastMult = 1;
+      break;
+    }
+    case 'killed': case 'projectile-hit':
+      if (e.points && (e.killed ?? true)) addScore(e.points, e.position || headPos, weaponHand, e.enemy?.type);
+      break;
+    case 'burst': if (e.position) fx.burst(e.position, e.color ?? 0xffa040, 12); break;
+    case 'chain': if (e.from && e.to) fx.tracer(e.from, e.to, 0xd8a0ff); break;
+    case 'boss-roar': playSpell('boss-roar'); break;
+    case 'boss-phase': playSpell('boss-roar'); notify('КОЛОСС В ЯРОСТИ!', '#ff7a2a'); break;
+  }
+}
+function onDirectorEvent(e) {
+  if (e.label) notify(e.label, e.type === 'defeat' ? '#ff5a7a' : '#ffd23f');
+  if (e.type === 'wave-start' || e.type === 'boss') playSpell('level-up');
+  if ((e.type === 'victory' || e.type === 'defeat') && state === 'play') endGame();
+}
+
+// каждый кадр: лук, клинок, модель оружия, противники и волны
+const palmLocal = new THREE.Vector3(0, -0.055, 0.075);
+const drawPos = new THREE.Vector3();
+const headDirV = new THREE.Vector3();
+function updateCombat(dt, wdt) {
+  if (!combatOn) return;
+  ensureFantasyGuns();
+  const w = arsenal.current, def = w.def, g = handGun(weaponHand);
+  camera.getWorldDirection(headDirV);
+  const ts = dt > 0 ? wdt / dt : 1;
+  if (renderer.xr.isPresenting && g && weaponHand && arsenal.ready) {
+    if (def.action === 'bow' && bowCtl) {
+      const off = offHand();
+      if (off) off.localToWorld(drawPos.copy(palmLocal));
+      const rel = bowCtl.update(dt, { bow: g, bowHand: weaponHand, drawHand: off ? drawPos : null, drawing: !!(off?.userData.trigHeld || off?.userData.gripHeld) });
+      if (bowCtl.nocked && !bowWasNocked) playSpell('bow-draw');
+      bowWasNocked = !!bowCtl.nocked;
+      if (rel) {
+        const r = wpnMod.bowRelease(w, rel.power);
+        if (r) {
+          spellDir.copy(rel.dir);
+          launchSpell(rel.origin, spellDir, wpnMod.shotParams(w, r, rel.power), w.spread({ aim: 1 }), weaponHand);
+          g.fire?.();
+          playSpell('bow-release');
+          vibrate(weaponHand, 0.6, 50);
+        }
+      }
+    } else if (def.action === 'melee' && melee) {
+      const hits = melee.update(dt, { blade: g, hand: weaponHand, hittables: enemies.meshes });
+      for (const h of hits) {
+        const r = enemies.hit(h.object, h.point, { damage: def.swing.damage * (0.5 + h.strength), instanceId: h.instanceId });
+        scoreEnemy(r, h.point, weaponHand);
+        playSpell('sword-hit');
+        vibrate(weaponHand, 0.8, 60);
+      }
+      if (melee.wave && wpnMod.bladeWave(w, melee.wave.power)) { slashes?.spawn?.(melee.wave, def.wave); playSpell('sword-swing', { volume: 1.2 }); }
+      if (melee.tipSpeed > def.swing.minSpeed) {
+        const ph = enemies.projectiles.hitTest(melee.segment.from, melee.segment.to, 0.12);
+        if (ph) { enemies.projectiles.deflect(ph.projectile, headDirV); fx.burst(ph.point, 0x7fd8ff, 12); playSpell('barrier-hit'); }
+      }
+    }
+  }
+  g?.update?.(dt, { mana01: w.mana01, charge01: w.charge01 ?? 0, element: w.element, draw01: bowCtl?.draw01 ?? 0, moving: Math.min(1, speedFrac), aim: aimAmt });
+  if (director.running || enemies.count) {
+    for (const e of enemies.update(dt, { headPos, headDir: headDirV, timeScale: ts })) onEnemyEvent(e);
+    for (const e of director.update(dt, { timeScale: ts })) onDirectorEvent(e);
+  }
+  slashes?.update?.(dt, {
+    hittables: enemies.meshes, timeScale: ts,
+    onHit: (h) => scoreEnemy(enemies.hit(h.object, h.point, { damage: h.damage, instanceId: h.instanceId }), h.point, weaponHand),
+  });
 }
 
 // ---------- динамическое качество ----------
@@ -1878,6 +2209,7 @@ renderer.setAnimationLoop(() => {
   for (const e of arsenal.drain()) {
     if (e.type !== 'draw') continue;
     sound('draw');
+    if (combatOn) { melee?.reset?.(); bowCtl?.cancel?.(); }
     if (xr) comfort?.showWeapon?.(arsenal.current.def.short || arsenal.current.def.name, weaponHand);
   }
   if (arsenal.current.def.id !== lastWeaponId) { lastWeaponId = arsenal.current.def.id; syncGunVisibility(); aimAmt = 0; }
@@ -1886,6 +2218,7 @@ renderer.setAnimationLoop(() => {
   if (xr) updateFantasy(dt);
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
+  updateCombat(dt, wdt);
 
   // полёт пуль
   collectHittables();
@@ -1894,11 +2227,11 @@ renderer.setAnimationLoop(() => {
   if (state === 'countdown') updateCountdown(dt);
 
   if (state === 'play') {
-    timeLeft -= dt;
     elapsed += dt;
-    spawnTimer -= dt;
     if (goHide > 0 && (goHide -= dt) <= 0) menu.mesh.visible = false;
-    if (spawnTimer <= 0 && targets.children.length < MAX_TARGETS) {
+    if (combatOn) timeLeft = director.mode === 'trial' ? director.timeLeft : 0; // конец раунда — по событиям волн
+    else { timeLeft -= dt; spawnTimer -= dt; }
+    if (!combatOn && spawnTimer <= 0 && targets.children.length < MAX_TARGETS) {
       spawnTarget();
       spawnTimer = Math.max(0.35, 1.0 - elapsed * 0.011); // темп растёт
     }
@@ -1908,7 +2241,7 @@ renderer.setAnimationLoop(() => {
     // музыка нарастает к концу раунда
     const intensity = Math.round((0.35 + 0.65 * Math.min(1, elapsed / ROUND_TIME)) * 20) / 20;
     if (intensity !== lastIntensity) { lastIntensity = intensity; music.setIntensity(intensity); }
-    if (timeLeft <= 0) { timeLeft = 0; endGame(); }
+    if (!combatOn && timeLeft <= 0) { timeLeft = 0; endGame(); }
   }
 
   updateTargets(wdt, time);
@@ -1918,6 +2251,7 @@ renderer.setAnimationLoop(() => {
   logo?.update?.(dt, time);
   if (fantasy) fantasyWorld.update(wdt, time);
   updateModeButton();
+  updateCombatModeButton();
   gfx?.update?.(dt, time);
   updateControllers();
   updateViewModel(dt);
@@ -1930,7 +2264,7 @@ renderer.setAnimationLoop(() => {
   if (menu.mesh.visible) follow(menu.mesh, 3, Math.max(1.1, headPos.y) + Math.sin(time * 1.5) * 0.03, 3, dt);
   board.update(sharedArena.active
     ? { score: sharedArena.score, timeLeft: sharedArena.timeLeft, multiplier: 1, timeFrac: sharedArena.timeLeft / ROUND_TIME }
-    : { score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1 });
+    : { score, timeLeft, multiplier: multiplier(), timeFrac: state === 'play' ? timeLeft / ROUND_TIME : 1, wave: combatOn && director?.mode === 'waves' ? director.wave : undefined });
 
   if (xr && arsenal.current.def.zoom) {
     try { renderScopeLens(); } catch (e) { console.warn(e); }
@@ -1954,7 +2288,7 @@ function updateCharacter(dt) {
   gunState.empty = w.def.action === 'semi' && w.empty;
   gunState.heat = w.heat;
   if (renderer.xr.isPresenting) {
-    handGun(weaponHand)?.update?.(dt, gunState);
+    if (!combatOn) handGun(weaponHand)?.update?.(dt, gunState);
   } else if (viewModel.visible || scoped) {
     pcGun()?.update?.(dt, gunState);
   }
@@ -1984,6 +2318,8 @@ if (/[?&]debug\b/.test(location.search)) {
     setMode(m) { setMode(m); },
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y, z)); },
     get skills() { return skills; },
+    get combat() { return { on: combatOn, mode: director?.mode, running: director?.running, enemies: enemies?.count, hp: director?.hp, weapon: arsenal.current.def.id, mana: arsenal.current.mana, wave: director?.wave }; },
+    startRound() { if (state === 'menu' || state === 'over') startGame(); },
     get holsters() { return holsters; },
     get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
