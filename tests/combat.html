@@ -147,13 +147,14 @@
 
     // ---------- VR-контроллеры ----------
     const hands = { left: null, right: null };
+    // оружие — на луче прицеливания (targetRay): ствол смотрит туда же, куда луч контроллера
     for (let i = 0; i < 2; i++) {
-      const grip = renderer.xr.getControllerGrip(i);
+      const grip = renderer.xr.getController(i);
       rig.add(grip);
       grip.addEventListener('connected', (e) => {
         const side = e.data.handedness === 'left' ? 'left' : 'right';
         hands[side] = { grip, source: e.data, prev: [], held: [] };
-        if (side === 'right') { grip.add(holder); holder.position.set(0, 0, 0); holder.rotation.set(-0.35, 0, 0); }
+        if (side === 'right') { grip.add(holder); holder.position.set(0, 0, 0); holder.rotation.set(0, 0, 0); }
         else grip.add(leftMarker);
       });
       grip.addEventListener('disconnected', () => {

@@ -3,7 +3,7 @@
 // «прометённого» между кадрами (несколько отрезков от прежнего положения к новому), с целями.
 import * as THREE from 'three';
 
-const SAMPLES = 4;            // точек вдоль лезвия
+const SAMPLES = 8;            // точек вдоль лезвия (шаг ~10 см)
 const HIT_COOLDOWN = 0.35;    // с, одна цель не получает два удара за взмах
 const MAX_HITS = 8;
 
@@ -65,10 +65,11 @@ export function createMelee({ minSpeed = 2, fullSpeed = 7, waveSpeed = 6, waveCo
 
       if (inst >= minSpeed && hittables && hittables.length) {
         // от прежнего положения лезвия к новому: SAMPLES отрезков от гарды до кончика
-        for (let i = 0; i < SAMPLES && hits.length < MAX_HITS; i++) {
+        // + последний отрезок: само лезвие в новом положении (укол)
+        for (let i = 0; i <= SAMPLES && hits.length < MAX_HITS; i++) {
           const u = (i + 1) / SAMPLES;
-          _a.lerpVectors(prevBase, prevTip, u);
-          _b.lerpVectors(_base, _tip, u);
+          if (i < SAMPLES) { _a.lerpVectors(prevBase, prevTip, u); _b.lerpVectors(_base, _tip, u); }
+          else { _a.copy(_base); _b.copy(_tip); }
           _dir.subVectors(_b, _a);
           const len = _dir.length();
           if (len < 1e-4) continue;
@@ -78,6 +79,7 @@ export function createMelee({ minSpeed = 2, fullSpeed = 7, waveSpeed = 6, waveCo
           raycaster.intersectObjects(hittables, false, _found);
           for (let j = 0; j < _found.length && hits.length < MAX_HITS; j++) {
             const f = _found[j];
+            if (!f.object.visible) continue;
             const key = f.object.id * 4096 + (f.instanceId ?? 4095);
             if (recent.has(key)) continue;
             recent.set(key, time + HIT_COOLDOWN);

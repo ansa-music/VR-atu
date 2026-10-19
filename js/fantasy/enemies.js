@@ -482,6 +482,10 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
 
   const meshes = [M.wisp.core, M.fairy.body, M.skull.body, M.guardian.body, M.guardian.rune, M.eye.ball,
     bossBody, bossArmL, bossArmR, bossCore];
+  // меши босса прячем вместе с группой: Raycaster не смотрит на видимость родителя
+  let bossArmsOff = false; // у GLB-колосса руки свои
+  function setBossMeshes(v) { bossBody.visible = bossCore.visible = v; bossArmL.visible = bossArmR.visible = v && !bossArmsOff; }
+  setBossMeshes(false);
 
   // ---------- Пулы врагов ----------
   let nextId = 1;
@@ -793,7 +797,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     if (type === 'boss') {
       boss = e;
       e.vis = 1;
-      bossGroup.visible = true;
+      bossGroup.visible = true; setBossMeshes(true);
       updateBoss(e, 0);
       ev('boss-roar');
     } else {
@@ -821,7 +825,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     e.aIdx = -1;
     if (e.type === 'boss') {
       boss = null;
-      bossGroup.visible = false;
+      bossGroup.visible = false; setBossMeshes(false);
     } else {
       const list = lists[e.type];
       const i = e.slot;
@@ -1203,8 +1207,26 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
   function updateGuardian(e, dt) {
     const dx = head.x - e.pos.x, dz = head.z - e.pos.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    const stop = 5;
+    const stop = 1.7;                     // подходит на удар клинком
     let moving = false;
+    // удар кулаком: в 2.2 м — замах 0.7 с, затем урон
+    if (d < 2.2 && e.vis >= 1) {
+      if (!e.charging) {
+        e.attackT -= dt;
+        if (e.attackT <= 0) { e.charging = true; e.chargeT = 0.7; ev('charge').enemy = e; }
+      } else {
+        e.chargeT -= dt;
+        if (e.chargeT <= 0) {
+          e.charging = false;
+          e.attackT = 2.5;
+          const h = ev('player-hit');
+          h.damage = 2;
+          h.enemy = e;
+          h.point = h._a.copy(head);
+          burst(head, 0x9fb4ff, 'impact');
+        }
+      }
+    } else { e.charging = false; if (e.attackT < 0.8) e.attackT = 0.8; }
     if (d > stop + 0.02) {
       const step = Math.min(0.55 * dt, d - stop);
       e.pos.x += dx / d * step;
@@ -1516,6 +1538,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
       M.guardian.rune.boundingSphere = null;
       if (M.guardian.rune.count > 0) M.guardian.rune.computeBoundingSphere();
     } else if (id === 'boss') {
+      bossArmsOff = true;
       bossArmL.visible = bossArmR.visible = false;
       if (wp) {
         const ny = wp.y * fit.s, nz = -wp.z * fit.s;
