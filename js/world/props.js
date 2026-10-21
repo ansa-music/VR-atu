@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mulberry32 } from './noise.js';
+import { POIS } from '../../shared/defs/pois.js';
 
 // модель → [масштаб, плотность по биомам]
 const SETS = {
@@ -13,9 +14,10 @@ const SETS = {
   b_desert_ruins: [['tree_palmTall', 4, 4], ['cactus_tall', 4, 8], ['rock_largeC', 3, 6]],
   b_volcano: [['rock_tallB', 4, 12], ['stone_largeB', 4, 10]],
 };
-const RADIUS = { quest: 160, phone: 160, pc_low: 220, pc_high: 300 };
+const RADIUS = { quest: 120, phone: 140, pc_low: 220, pc_high: 300 };
 const CELL = 6; // шаг сетки кандидатов, м
 const DENSITY = { quest: 0.5, phone: 0.5, pc_low: 0.8, pc_high: 1 }; // на Quest вдвое реже: бюджет треугольников
+const LIGHT = new Set(['quest', 'phone']); // на Quest и телефоне без мелких цветов — их заменяет трава
 
 export async function createProps({ sampler, center, seaLevel, presetId = 'quest' }) {
   const group = new THREE.Group();
@@ -46,8 +48,10 @@ export async function createProps({ sampler, center, seaLevel, presetId = 'quest
       const y = sampler.heightAt(x, z);
       if (y < seaLevel + 0.6) continue;
       if (sampler.normalAt(x, z, nrm).y < 0.86) continue;
-      const set = SETS[sampler.biomeAt(x, z)];
-      if (!set) continue;
+      if (POIS.some((pp) => Math.hypot(x - pp.pos[0], z - pp.pos[1]) < (pp.type === 'hub' ? Math.max(34, pp.r + 8) : pp.r + 6))) continue; // на площадках построек деревьев нет
+      const set0 = SETS[sampler.biomeAt(x, z)];
+      if (!set0) continue;
+      const set = LIGHT.has(presetId) ? set0.filter((e) => !e[0].startsWith('flower_')) : set0;
       const total = set.reduce((s, e) => s + e[2], 0);
       if (rnd() * 100 > total * (DENSITY[presetId] ?? 0.5)) continue; // плотность: сумма весов на 100 клеток
       let r = rnd() * total, pick = set[0];

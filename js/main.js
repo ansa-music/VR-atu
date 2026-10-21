@@ -1476,6 +1476,10 @@ function worldStep(ox, oz) {
       else { rig.position.x = ox; rig.position.z = oz; vel.x = vel.z = 0; h = world.heightAt(ox + hx, oz + hz); }
     }
   }
+  // постройки аулов: выталкиваем голову из юрт и мавзолеев
+  const hp = { x: rig.position.x + hx, z: rig.position.z + hz };
+  world.collide(hp, 0.3);
+  rig.position.x = hp.x - hx; rig.position.z = hp.z - hz;
   const lim = world.size - 1;
   rig.position.x = THREE.MathUtils.clamp(rig.position.x + hx, 1, lim) - hx;
   rig.position.z = THREE.MathUtils.clamp(rig.position.z + hz, 1, lim) - hz;
@@ -2507,6 +2511,8 @@ if (world) {
   board.mesh.visible = false;
   menu.mesh.visible = false;
   setCombat(true); // магическое оружие и существа
+  // название места по-казахски, ниже — по-русски
+  world.onTitle = (t) => notify(t.kk + (t.ru && t.ru !== t.kk ? ' · ' + t.ru : ''), '#ffd23f');
   syncGunVisibility();
 }
 
@@ -2570,6 +2576,7 @@ function frame(_time, _xrFrame, forcedDt) {
   updateCombat(dt, wdt);
   world?.update(dt, headPos, renderer);
   updateWorldCreatures(dt);
+  if (world) world.combat = Math.min(1, (enemies?.count || 0) / 4);
 
   // полёт пуль
   collectHittables();
@@ -2676,6 +2683,7 @@ if (/[?&]debug\b/.test(location.search)) {
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
+    get scene() { return scene; },
     get spectator() { return { code: SPECTATE, status: spectator.status, foes: specFoes.count, hands: specHands.filter((g) => g.visible).length, sendCode: castSender?.code, viewers: castSender?.viewers }; },
     get mirror() { return { enabled: vrMirror.enabled, frames: vrMirror.frames }; },
     get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },

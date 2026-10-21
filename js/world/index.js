@@ -10,6 +10,7 @@ import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { createProps } from './props.js';
 import { createAmbientAudio } from './ambient-audio.js';
+import { createKzWorld } from './kz-world.js';
 import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
 import { DAMAGE_TYPE_VFX } from '../../shared/defs/damage-vfx.js';
 
@@ -101,6 +102,10 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
 
   let biome = sampler.biomeAt(spawn.x, spawn.z);
   const nature = createAmbientAudio(); // птицы и пар (CC0-файлы)
+  // казахское оформление: аулы, шаңырақ-порталы, балбалы, мавзолеи, названия, кюй
+  const kz = createKzWorld({ heightAt: sampler.heightAt, biomeAt: sampler.biomeAt, seaLevel, quality: presetId });
+  group.add(kz.group);
+  let onTitle = null, combat01 = 0;
   const push = [0, 0];
 
   return {
@@ -115,6 +120,11 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
     normalAt: sampler.normalAt,
     biomeAt: sampler.biomeAt,
     get biome() { return biome; },
+    /** Подпись места на казахском: onTitle({ kk, ru }). */
+    set onTitle(fn) { onTitle = fn; },
+    set combat(v) { combat01 = v; },
+    /** Не пройти сквозь юрты и постройки. */
+    collide(pos, r) { kz.collide(pos, r); },
     /** У края мира «буря» мягко отталкивает к центру: ускорение, м/с². */
     borderPush(x, z) {
       const k = 12;
@@ -135,6 +145,8 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
       biome = sampler.biomeAt(head.x, head.z);
       ambient.setStyle(ambientStyle(biome, sky.night));
       nature.update(dt, biome, sky.night);
+      const title = kz.update(dt, head, biome, null, { combat: combat01 }); // LOD построек обновляет сам рендер
+      if (title && onTitle) onTitle(title);
       if (renderer) viewH = renderer.xr.isPresenting ? 1700 : renderer.domElement.height;
       ambient.update(dt, head, viewH);
       particles.update(dt, viewH);
@@ -145,7 +157,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
     /** Перевести время суток (часы 0–24), mul — скорость (1 = сутки за 40 мин). */
     setTime(h, mul) { sky.setTime(h, mul); },
     stats() {
-      return { preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, props: props?.stats ?? null, ...chunks.stats, triangles: chunks.triangles() };
+      return { kz: kz.stats, preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, props: props?.stats ?? null, ...chunks.stats, triangles: chunks.triangles() };
     },
   };
 }

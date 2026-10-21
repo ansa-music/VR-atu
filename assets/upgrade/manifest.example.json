@@ -1,0 +1,5 @@
+{
+  "poi_hub_dawnford": { "file": "aul-dawnford.glb", "scale": 1, "rotate": 0, "y": 0 },
+  "type:tower": { "file": "tower.glb", "scale": 1.2, "keepProcedural": false },
+  "type:dungeon": { "file": "mausoleum.glb", "scale": 1 }
+}
