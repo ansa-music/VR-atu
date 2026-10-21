@@ -10,6 +10,7 @@ import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { createProps } from './props.js';
 import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
+import { DAMAGE_TYPE_VFX } from '../../shared/defs/damage-vfx.js';
 
 /** Пресет мира по уровню качества игры: Quest → quest, телефон → phone, ПК → pc_low / pc_high. */
 export function worldPresetId(quality, { coarse = false, override = null } = {}) {
@@ -136,6 +137,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
       particles.update(dt, viewH);
     },
     particles,
+    vfx: DAMAGE_TYPE_VFX,
     get hour() { return sky.hour; },
     /** Перевести время суток (часы 0–24), mul — скорость (1 = сутки за 40 мин). */
     setTime(h, mul) { sky.setTime(h, mul); },

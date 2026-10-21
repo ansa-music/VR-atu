@@ -260,7 +260,7 @@ let best = 0;
 try { best = Number(localStorage.getItem('vr-tir-best')) || 0; } catch {}
 
 const multiplier = () => Math.min(4, 1 + Math.floor(combo / 5));
-const scoring = () => state === 'play' && !sharedArena.active;
+const scoring = () => (state === 'play' || !!world) && !sharedArena.active; // в открытом мире очки идут всегда
 
 // Сетевой матч не должен запускать локальные таймеры и меню одиночного тира.
 let lastMultiplayerPhase = null;
@@ -550,7 +550,7 @@ function collectHittables() {
   if (scoring()) for (const t of targets.children) hittables.push(t);
   if (!sharedArena.active && menu.mesh.visible && state !== 'play') hittables.push(menu.mesh);
   if (pvpEnabled) return; // на «Бастионе» рубежа нет, попадания считает сервер
-  if (world) return;      // в открытом мире целей пока нет (фаза 1)
+  if (world) { if (combatOn) for (const m of enemies.meshes) hittables.push(m); return; } // в мире — только существа
   if (fantasy) {
     if (combatOn) for (const m of enemies.meshes) hittables.push(m);
     for (const r of runeSet) hittables.push(r);
@@ -589,6 +589,28 @@ function hitTest(from, dir, length, exclude) {
     best = hitResult;
     break;
   }
+  if (world) {
+    // рельеф: марш по лучу шагом 1 м, затем уточнение делением пополам
+    const max = best ? best.distance : length;
+    let prev = 0;
+    for (let t = Math.min(1, max); t <= max + 1e-6; t = Math.min(max, t + 1)) {
+      hitTo.copy(from).addScaledVector(dir, t);
+      if (hitTo.y < world.heightAt(hitTo.x, hitTo.z)) {
+        let a = prev, b = t;
+        for (let k = 0; k < 6; k++) {
+          const m = (a + b) / 2;
+          hitTo.copy(from).addScaledVector(dir, m);
+          if (hitTo.y < world.heightAt(hitTo.x, hitTo.z)) b = m; else a = m;
+        }
+        hitResult.object = null; hitResult.point.copy(from).addScaledVector(dir, b); hitResult.distance = b;
+        hitResult.kind = 'ground'; hitResult.instanceId = undefined; hitResult.projectile = null;
+        best = hitResult;
+        break;
+      }
+      prev = t;
+      if (t >= max) break;
+    }
+  }
   if (combatOn) {
     // огненные шары противников можно сбить
     hitTo.copy(from).addScaledVector(dir, length);
@@ -610,6 +632,7 @@ function onBulletHit(shot, hit) {
   switch (hit.kind) {
     case 'ground':
       if (near) sound('impact', 'ground');
+      if (world) worldImpact(point, shot);
       return false;
     case 'target': {
       const t = hit.object;
@@ -656,6 +679,7 @@ function onBulletHit(shot, hit) {
       if (r && !r.blocked && !shot.hit && scoring()) { shot.hit = true; hits++; }
       scoreEnemy(r, point, shot.controller);
       if (shot.radius > 0) enemyExplode(point, shot.radius, (shot.damage ?? 1) * 0.6, shot.element);
+      if (world) worldImpact(point, shot);
       return false;
     }
     case 'menu':
@@ -756,7 +780,10 @@ function tryShoot(first, source) {
     }
   }
 
-  if (combatOn && (d.action === 'bow' || d.action === 'melee')) return; // лук и клинок — отдельно
+  if (combatOn && (d.action === 'bow' || d.action === 'melee')) {
+    if (!controller && first) pcBowOrBlade(w, d); // на ПК: лук стреляет полным натяжением, клинок — взмах
+    return; // в шлеме лук и клинок — руками
+  }
   const r = w.pull(first);
   if (!r) return;
   if (w.manaFed) {
@@ -884,7 +911,10 @@ canvas.addEventListener('mousedown', (e) => {
   }
 });
 addEventListener('mouseup', (e) => {
-  if (e.button === 0) pcTrigger.held = false;
+  if (e.button === 0) {
+    pcTrigger.held = false;
+    if (combatOn && !renderer.xr.isPresenting) releaseSpell(null); // заряженный выстрел жезла
+  }
   if (e.button === 2) aimHeld = false;
 });
 
@@ -929,7 +959,7 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'Space' && !renderer.xr.isPresenting) { e.preventDefault(); jumpRequested = true; }
   if (e.code === 'KeyR') arsenal.current.startReload();
-  if (e.code === 'KeyB') arsenal.current.toggleMode();
+  if (e.code === 'KeyB') { if (combatOn && arsenal.current.def.id === 'staff') wpnMod.nextElement?.(arsenal.current); else arsenal.current.toggleMode?.(); }
   const digit = /^Digit([1-9])$/.exec(e.code);
   if (digit && Number(digit[1]) <= WEAPONS.length) arsenal.select(Number(digit[1]) - 1);
   if (e.code === 'Enter' && !world && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
@@ -1145,14 +1175,16 @@ applySelectedSkin(chosenSkin);
 addEventListener('skin:changed', e => applySelectedSkin(e.detail?.skin));
 
 viewModel.visible = hasGuns;
-const pcGun = () => pcGuns[arsenal.current.def.id];
+let pcFGuns = null; // фэнтези-оружие у камеры на ПК (открытый мир), создаётся при включении боя
+const pcGun = () => (combatOn ? pcFGuns || {} : pcGuns)[arsenal.current.def.id];
 const handGun = (c) => (combatOn ? c?.userData.fguns : c?.userData.guns)?.[arsenal.current.def.id] || null;
 const currentGun = (controller) => (controller ? handGun(controller) : renderer.xr.isPresenting ? handGun(weaponHand) : pcGun());
 
 // показываем только текущее оружие и только в нужной руке
 function syncGunVisibility() {
   const id = arsenal.current.def.id;
-  for (const [gid, g] of Object.entries(pcGuns)) g.group.visible = gid === id;
+  for (const [gid, g] of Object.entries(pcGuns)) g.group.visible = gid === id && !combatOn;
+  for (const [gid, g] of Object.entries(pcFGuns || {})) g.group.visible = gid === id && combatOn;
   for (const c of controllers) {
     const mine = c === weaponHand;
     for (const [gid, g] of Object.entries(c.userData.guns || {})) g.group.visible = mine && gid === id && !combatOn;
@@ -1911,7 +1943,7 @@ function updateBracer() {
 
 // ---------- бой «Арены магов»: фэнтези-оружие, противники, волны ----------
 const fantasyArsenal = safeCall(wpnMod.createFantasyArsenal);
-const enemies = safeCall(enemiesMod.createEnemies, scene, { quality });
+const enemies = safeCall(enemiesMod.createEnemies, scene, { quality, groundAt: world ? world.heightAt : undefined });
 const director = enemies ? safeCall(wavesMod.createWaveDirector, enemies, { roundTime: ROUND_TIME }) : null;
 const bowCtl = safeCall(bowMod.createBowController);
 const melee = safeCall(meleeMod.createMelee);
@@ -1953,7 +1985,7 @@ function setCombat(on) {
   if (on === combatOn) return;
   combatOn = on;
   arsenal = on ? fantasyArsenal : classicArsenal;
-  if (on) ensureFantasyGuns();
+  if (on) { ensureFantasyGuns(); pcFGuns ||= buildFantasyGunSet(viewModel); }
   melee?.reset?.();
   bowCtl?.cancel?.();
   director?.stop?.();
@@ -2108,9 +2140,9 @@ function onEnemyEvent(e) {
     case 'fireball': playSpell('fireball', { distance: e.origin ? e.origin.distanceTo(headPos) : 10 }); break;
     case 'charge': playSpell('charge', { volume: 0.5 }); break;
     case 'player-hit': {
-      const hp = director.damagePlayer(e.damage ?? 1);
+      const hp = world ? worldDamage(e.damage ?? 1) : director.damagePlayer(e.damage ?? 1);
       for (const c of controllers) vibrate(c, 1, 120);
-      notify(`♥ ${hp} / ${director.maxHp}`, '#ff5a6e');
+      notify(`♥ ${Math.ceil(hp)} / ${world ? WORLD_MAX_HP : director.maxHp}`, '#ff5a6e');
       playSpell('enemy-hit');
       combo = 0; lastMult = 1;
       break;
@@ -2137,7 +2169,7 @@ const headDirV = new THREE.Vector3();
 function updateCombat(dt, wdt) {
   if (!combatOn) return;
   ensureFantasyGuns();
-  const w = arsenal.current, def = w.def, g = handGun(weaponHand);
+  const w = arsenal.current, def = w.def, g = renderer.xr.isPresenting ? handGun(weaponHand) : pcGun();
   camera.getWorldDirection(headDirV);
   const ts = dt > 0 ? wdt / dt : 1;
   if (renderer.xr.isPresenting && g && weaponHand && arsenal.ready) {
@@ -2181,6 +2213,70 @@ function updateCombat(dt, wdt) {
     hittables: enemies.meshes, timeScale: ts,
     onHit: (h) => scoreEnemy(enemies.hit(h.object, h.point, { damage: h.damage, instanceId: h.instanceId }), h.point, weaponHand),
   });
+}
+
+// ---------- открытый мир: существа по биомам, здоровье игрока, вспышки попаданий ----------
+const WORLD_MAX_HP = 10;
+const WORLD_SPAWNS = {
+  b_meadow: ['wisp', 'wisp', 'fairy'], b_forest: ['wisp', 'fairy', 'guardian'], b_swamp: ['skull', 'wisp', 'eye'],
+  b_mountains: ['guardian', 'eye', 'wisp'], b_desert_ruins: ['eye', 'guardian', 'skull'], b_volcano: ['eye', 'skull', 'guardian'],
+};
+const WORLD_CAP = { wisp: 4, fairy: 1, skull: 2, guardian: 1, eye: 2 };
+const WORLD_CRATER = { x: 1390, z: 320 }; // кальдера: здесь живёт колосс
+let worldHp = WORLD_MAX_HP, worldHurtT = 0, worldSpawnT = 3, worldBossCd = 0;
+function updateWorldCreatures(dt) {
+  if (!world || !combatOn || !enemies) return;
+  worldHurtT -= dt;
+  if (worldHurtT <= 0 && worldHp < WORLD_MAX_HP) worldHp = Math.min(WORLD_MAX_HP, worldHp + dt * 0.5);
+  worldBossCd -= dt;
+  if ((worldSpawnT -= dt) > 0) return;
+  worldSpawnT = 2.5 + Math.random() * 2.5;
+  // колосс — у кальдеры вулкана, раз в 3 минуты
+  if (world.biome === 'b_volcano' && worldBossCd <= 0 && Math.hypot(headPos.x - WORLD_CRATER.x, headPos.z - WORLD_CRATER.z) < 160 && enemies.spawn('boss')) {
+    worldBossCd = 180;
+    notify('КАМЕННЫЙ КОЛОСС ПРОБУДИЛСЯ!', '#ff7a2a');
+    playSpell('boss-roar');
+    return;
+  }
+  const list = WORLD_SPAWNS[world.biome] || WORLD_SPAWNS.b_meadow;
+  const type = list[Math.floor(Math.random() * list.length)];
+  if (enemies.count < 8 && enemies.countOf(type) < WORLD_CAP[type]) enemies.spawn(type);
+}
+// урон игроку; при нуле — возвращение в Рассветный Брод
+function worldDamage(dmg) {
+  worldHp -= dmg;
+  worldHurtT = 4;
+  if (worldHp <= 0) {
+    worldHp = WORLD_MAX_HP;
+    enemies.clear();
+    moveHeadTo(new THREE.Vector3(world.spawn.x, world.spawn.y, world.spawn.z));
+    notify('Вы пали — возвращение в Рассветный Брод', '#ff5a7a');
+  }
+  return worldHp;
+}
+// вспышка попадания по стихии заклинания (формат DAMAGE_TYPE_VFX)
+const ELEMENT_VFX = { fire: 'fire', ice: 'frost', lightning: 'lightning', rune: 'arcane' };
+function worldImpact(point, shot) {
+  const v = world.vfx?.[ELEMENT_VFX[shot.element] || (combatOn ? 'arcane' : 'physical')];
+  if (v && point.distanceToSquared(headPos) < 6400) world.particles.burst(v.hit, point, null, 0.8);
+}
+// ПК: лук — выстрел полным натяжением, клинок — удар перед собой и волна
+const bladeOrigin = new THREE.Vector3();
+function pcBowOrBlade(w, d) {
+  if (d.action === 'bow') {
+    const r = wpnMod.bowRelease(w, 1);
+    if (!r) return;
+    spellDir.copy(raycaster.ray.direction);
+    launchSpell(muzzlePos, spellDir, wpnMod.shotParams(w, r, 1), w.spread({ aim: Math.max(aimAmt, 0.6) }), null);
+    pcGun()?.fire?.();
+    playSpell('bow-release');
+    return;
+  }
+  bladeOrigin.copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, 1.4);
+  const n = enemyExplode(bladeOrigin, 1.3, d.swing?.damage ?? 2, null);
+  playSpell(n ? 'sword-hit' : 'sword-swing');
+  pcGun()?.fire?.();
+  if (wpnMod.bladeWave(w, 1)) slashes?.spawn?.({ origin: raycaster.ray.origin.clone(), dir: raycaster.ray.direction.clone(), up: new THREE.Vector3(0, 1, 0), power: 1 }, d.wave);
 }
 
 // ---------- динамическое качество ----------
@@ -2237,6 +2333,8 @@ if (world) {
   groundY = world.spawn.y;
   board.mesh.visible = false;
   menu.mesh.visible = false;
+  setCombat(true); // магическое оружие и существа
+  syncGunVisibility();
 }
 
 // ---------- игровой цикл ----------
@@ -2296,6 +2394,7 @@ function frame(_time, _xrFrame, forcedDt) {
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
   updateCombat(dt, wdt);
   world?.update(dt, headPos, renderer);
+  updateWorldCreatures(dt);
 
   // полёт пуль
   collectHittables();
@@ -2370,7 +2469,7 @@ function updateCharacter(dt) {
   if (renderer.xr.isPresenting) {
     if (!combatOn) handGun(weaponHand)?.update?.(dt, gunState);
   } else if (viewModel.visible || scoped) {
-    pcGun()?.update?.(dt, gunState);
+    if (!combatOn) pcGun()?.update?.(dt, gunState);
   }
   wristInfo.score = sharedArena.active ? sharedArena.score : score;
   wristInfo.timeLeft = sharedArena.active ? sharedArena.timeLeft : timeLeft;
@@ -2391,7 +2490,7 @@ if (/[?&]debug\b/.test(location.search)) {
   window.vrTirDebug = {
     look(yawDeg, pitchDeg = 0) { yaw = toRad(yawDeg); pitch = toRad(pitchDeg); },
     aim(on = true) { aimHeld = on; },
-    fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; }, 30); },
+    fire() { pcTrigger.held = true; pcTrigger.first = true; pcTrigger.ndc = null; setTimeout(() => { pcTrigger.held = false; if (combatOn && !renderer.xr.isPresenting) releaseSpell(null); }, 30); },
     select(i) { arsenal.select(i); },
     get touch() { return touch; },
     get fantasy() { return { active: fantasy, mode: userSettings.mode, mana: skills?.mana, ult: skills?.ult01, timeScale: skills?.timeScale, lastCast: skills?.lastCast, kiState: skills?.kiState, groundY, menu: menu === fantasyMenu ? 'fantasy' : 'classic', modeButton: modeButton.visible }; },
@@ -2399,6 +2498,15 @@ if (/[?&]debug\b/.test(location.search)) {
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
+    get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },
+    spawn(type) { return !!enemies?.spawn(type); },
+    aimNearest() {
+      const e = (enemies?.active || []).filter((x) => x.alive).sort((a, b) => a.center.distanceTo(headPos) - b.center.distanceTo(headPos))[0];
+      if (!e) return null;
+      const dx = e.center.x - headPos.x, dy = e.center.y - headPos.y, dz = e.center.z - headPos.z;
+      yaw = Math.atan2(-dx, -dz); pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      return { type: e.type, dist: +Math.hypot(dx, dy, dz).toFixed(1), y: +e.center.y.toFixed(1) };
+    },
     burst(type = 'fire') { import('../shared/defs/damage-vfx.js').then(m => world?.particles.burst(m.DAMAGE_TYPE_VFX[type].hit, headPos.clone().add(new THREE.Vector3(0, -0.3, -2)), null)); },
     move(keyCode, ms = 500) { keys.add(keyCode); setTimeout(() => keys.delete(keyCode), ms); },
     get skills() { return skills; },

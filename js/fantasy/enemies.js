@@ -363,7 +363,8 @@ function buildBoss() {
 
 // ---------- Модуль ----------
 // glb: true — модели из assets/models для огонька и стража; массив id — свой набор; false — только процедурные
-export function createEnemies(scene, { quality, glb = true } = {}) {
+// groundAt(x, z) — высота земли (открытый мир); по умолчанию ровный пол y = 0, как на арене
+export function createEnemies(scene, { quality, glb = true, groundAt = () => 0 } = {}) {
   const qid = quality && CAP_K[quality.id] ? quality.id : 'medium';
   const capK = CAP_K[qid];
   const low = qid === 'low';
@@ -748,7 +749,8 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     const ca = Math.cos(a), sa = Math.sin(a);
     const dx = fwd.x * ca + fwd.z * sa, dz = -fwd.x * sa + fwd.z * ca;
     const dist = rand(d.dist[0], d.dist[1]);
-    return out.set(head.x + dx * dist, rand(d.height[0], d.height[1]), head.z + dz * dist);
+    const x = head.x + dx * dist, z = head.z + dz * dist;
+    return out.set(x, groundAt(x, z) + rand(d.height[0], d.height[1]), z);
   }
 
   function updateCenter(e) {
@@ -781,7 +783,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     e.side = Math.random() < 0.5 ? -1 : 1;
     e.zig = 0;
     if (position) e.pos.copy(position); else pickSpawn(type, e.pos);
-    if (type === 'guardian' || type === 'boss') e.pos.y = 0;
+    if (type === 'guardian' || type === 'boss') e.pos.y = groundAt(e.pos.x, e.pos.z);
     e.anchor.copy(e.pos);
     e.yaw = Math.atan2(head.x - e.pos.x, head.z - e.pos.z);
     e.quat.setFromAxisAngle(UP, e.yaw);
@@ -1150,7 +1152,8 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
       const k = (d < rMin ? rMin : rMax) / d;
       p.x = head.x + dx * k; p.z = head.z + dz * k;
     }
-    if (p.y < yMin) p.y = yMin; else if (p.y > yMax) p.y = yMax;
+    const g = groundAt(p.x, p.z);
+    if (p.y < g + yMin) p.y = g + yMin; else if (p.y > g + yMax) p.y = g + yMax;
   }
 
   function updateWisp(e, dt) {
@@ -1240,7 +1243,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     da -= Math.round(da / TAU) * TAU;
     e.yaw += da * Math.min(1, dt * 2.5);
     const sw = moving ? Math.sin(e.walk) : 0;
-    e.pos.y = moving ? Math.abs(Math.sin(e.walk)) * 0.05 : 0;
+    e.pos.y = groundAt(e.pos.x, e.pos.z) + (moving ? Math.abs(Math.sin(e.walk)) * 0.05 : 0);
     _euler.set(0, e.yaw, sw * 0.05);
     e.quat.setFromEuler(_euler);
   }
@@ -1323,7 +1326,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
     if (e.flash > 0) { const k = 1 + clamp01(e.flash / FLASH_T) * 3; bm.color.multiplyScalar(k); }
     bossCoreMat.color.setRGB(1, p2 ? 0.75 : 1, p2 ? 0.7 : 1);
     bossGroup.updateMatrixWorld(true);
-    e.pos.y = 0;
+    e.pos.y = groundAt(e.pos.x, e.pos.z);
     updateCenter(e);
     e.center.y -= 7.5 * (1 - em);
   }
@@ -1393,7 +1396,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
       p.age += wdt;
       p.prev.copy(p.pos);
       p.pos.addScaledVector(p.vel, wdt);
-      if (p.age >= PROJ_LIFE || p.pos.lengthSq() > 3600) { destroyProj(p); continue; }
+      if (p.age >= PROJ_LIFE || p.pos.distanceToSquared(head) > 3600) { destroyProj(p); continue; }
       if (p.deflected) {
         // по врагам
         let target = null;
@@ -1425,7 +1428,7 @@ export function createEnemies(scene, { quality, glb = true } = {}) {
         destroyProj(p);
         continue;
       }
-      if (p.pos.y <= 0.05) {
+      if (p.pos.y <= groundAt(p.pos.x, p.pos.z) + 0.05) {
         burst(p.pos, p.deflected ? 0x7fd8ff : 0xff7a2a, 'impact');
         destroyProj(p);
       }
