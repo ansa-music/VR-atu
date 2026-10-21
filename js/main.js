@@ -13,6 +13,7 @@ import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePe
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
 import { QUALITY, detectQuality, isStandaloneHeadset } from './quality.js';
 import { createVrMirror } from './vr-mirror.js';
+import { createVrHelp } from './vr-help.js';
 
 const { sfx } = audio;
 const classicMusic = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -1223,7 +1224,12 @@ function updateControllers() {
   }
 }
 
-// кнопки шлема: A — прыжок, B/Y — оружие, X — присед, стики — бег и режим огня
+// справка в шлеме: навыки, руны, оружие (держать Y)
+const vrHelp = createVrHelp();
+scene.add(vrHelp.mesh);
+let vrHelpHinted = false;
+
+// кнопки шлема: A — прыжок, B/Y — оружие (держать Y — справка), X — присед, стики — бег и режим огня
 function pollVrButtons() {
   for (const c of controllers) {
     const src = c.userData.src;
@@ -1243,7 +1249,18 @@ function pollVrButtons() {
       if (pressed(3)) arsenal.current.toggleMode();
     } else if (src.handedness === 'left') {
       if (pressed(4)) vrCrouch = !vrCrouch;
-      if (pressed(5)) arsenal.step(-1);
+      // Y: коротко — предыдущее оружие (или следующая страница справки), держать 0,6 с — справка
+      const y = !!b[5]?.pressed;
+      if (y && !prev[5]) c.userData.yDown = performance.now();
+      if (y && c.userData.yDown && performance.now() - c.userData.yDown > 600) {
+        c.userData.yDown = 0;
+        vrHelp.toggle(headPos, camera);
+        vibrate(c, 0.3, 40);
+      }
+      if (!y && prev[5] && c.userData.yDown) {
+        c.userData.yDown = 0;
+        if (vrHelp.open) vrHelp.next(); else arsenal.step(-1);
+      }
       if (pressed(3)) vrSprint = !vrSprint;
     }
     for (let i = 0; i < b.length; i++) prev[i] = !!b[i]?.pressed;
@@ -1706,11 +1723,13 @@ renderer.xr.addEventListener('sessionstart', () => {
   if (enterFantasy && !fantasy && (state === 'play' || state === 'countdown')) returnToSoloMenu();
   setFantasy(enterFantasy);
   emit('game:xr', { active: true });
+  if ((fantasy || world) && !vrHelpHinted) { vrHelpHinted = true; setTimeout(() => notify('Держи Y — справка: навыки, руны, оружие', '#9fe7ff'), 4000); }
 });
 renderer.xr.addEventListener('sessionend', () => {
   resetSessionInput();
   const wasFantasy = fantasy;
   setFantasy(false);
+  vrHelp.hide();
   if (wasFantasy && !world && !sharedArena.active) returnToSoloMenu();
   viewModel.visible = hasGuns;
   rig.position.y = world ? groundY : 0;
@@ -2758,6 +2777,7 @@ function frame(_time, _xrFrame, forcedDt, skipRender = false) {
   else castState(dt);
   if (!skipRender) renderer.render(scene, camera);
   if (xr && !skipRender) vrMirror.render(scene, camera, dt);
+  vrHelp.update(dt, headPos, camera);
   if (!ready) { ready = true; emit('game:ready'); }
 }
 renderer.setAnimationLoop(frame);
@@ -2810,6 +2830,7 @@ if (/[?&]debug\b/.test(location.search)) {
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
     get scene() { return scene; },
+    get vrHelp() { return vrHelp; },
     get spells() { return spells; },
     get swords() { return swords; },
     get spectator() { return { code: SPECTATE, status: spectator.status, foes: specFoes.count, hands: specHands.filter((g) => g.visible).length, sendCode: castSender?.code, viewers: castSender?.viewers }; },
