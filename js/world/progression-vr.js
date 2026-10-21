@@ -35,6 +35,7 @@ export function createProgressionVr({ bridge, camera, renderer }) {
       button('Далее', 700, 326, 278, 48, () => { page = (page + 1) % Math.ceil(SHOP.stock.length / 3); });
       button('Закрыть', 700, 384, 278, 48, () => { shop = false; });
     } else if (api.inHub()) button('Торговец · открыть лучом', 28, 326, 950, 66, () => { shop = true; });
+    else if (api.resourceHere()) button('Собрать: ' + itemLabel(api.resourceHere()), 28, 326, 950, 66, () => api.harvest());
     else { ctx.fillStyle = '#abc'; ctx.fillText('Торговец ждёт на базаре Рассветного Брода', 28, 355, 950); }
     texture.needsUpdate = true;
   }

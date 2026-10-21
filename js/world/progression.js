@@ -8,6 +8,7 @@ import { QUESTS } from '../../shared/defs/quests.js';
 import { ITEMS } from '../../shared/defs/items.js';
 import { NPCS } from '../../shared/defs/pois.js';
 import { KZ_POIS, KZ_BOSSES } from '../../shared/defs/theme_kz.js';
+import { BIOMES } from '../../shared/defs/world.js';
 
 export const MAX_LEVEL = LEVEL_CURVE.maxLevel;
 export const ATTR_KEYS = Object.freeze(['vit', 'agi', 'wil', 'pre']);
@@ -86,6 +87,18 @@ export function buyConstellation(p, key) {
 
 // ───────── Трекер основной линии квестов ─────────
 export function createQuestLog() { return { active: 'q_main_01', step: 0, counters: {}, done: [] }; }
+// Ресурсы биома у открытых POI: в текущем мире нет отдельного сборщика растений.
+// Один ресурс текущего задания на место; отметки входят в обычный снимок прогрессии.
+export function questResource(p, log, poi) {
+  const step = QUESTS[log.active]?.steps[log.step];
+  if (step?.type !== 'collect' || !BIOMES[poi?.biome]?.resources.includes(step.item)) return null;
+  return p.harvested?.includes(`${poi.id}:${step.item}`) ? null : step.item;
+}
+export function harvestQuestResource(p, log, inventory, poi) {
+  const item = questResource(p, log, poi);
+  if (!item || inventory.count(item) >= (ITEMS[item]?.stack ?? 99) || !inventory.add(item, 1)) return null;
+  (p.harvested ||= []).push(`${poi.id}:${item}`); return item;
+}
 /** ev: {type:'kill',mob}|{type:'goto'|'interact',poi}|{type:'collect',item,have}|{type:'talk',npc}|{type:'boss',boss}. Возвращает выполненный квест или null. */
 export function questEvent(log, ev) {
   const q = QUESTS[log.active]; if (!q) return null; const st = q.steps[log.step]; if (!st) return null;

@@ -148,6 +148,9 @@ export async function install(ow, opts = {}) {
   const stationsHere = () => { const q = nearPoi(); return [...(q?.stations || []), ...(Q.has('owstations') ? Object.keys(STATIONS) : [])]; };
   const inHub = () => { if (ow.nearMarket) return ow.nearMarket(); const q = nearPoi(); return q?.id === SHOP.poi || Q.has('owstations'); };
 
+  const resourceHere = () => P.questResource(prog, qlog, nearPoi());
+  function harvest() { const item = P.harvestQuestResource(prog, qlog, inv, nearPoi()); if (!item) return false; say(`+1 ${itemName(item)}`, '#9ff'); questProgress({ type: 'collect', item, have: inv.count(item) }); autosaver.trigger('resource'); return true; }
+
   // ───── меню ─────
   let tab = null; const TABS = [['inv', 'Инвентарь [I]'], ['craft', 'Крафт'], ['shop', 'Магазин'], ['skills', 'Навыки [K]'], ['quests', 'Квесты [L]']];
   function openMenu(t) {
@@ -215,6 +218,7 @@ export async function install(ow, opts = {}) {
   const onKey = (e) => {
     if (e.repeat || e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return; window.__owmKey = e.code + ':' + tab;
     if (e.code === 'KeyF' && inHub()) { e.preventDefault(); e.stopImmediatePropagation(); questProgress({ type: 'talk', npc: SHOP.npc }); if (ow.player.xr) api.toggleShop?.(); else openMenu('shop'); return; }
+    if (e.code === 'KeyF' && harvest()) { e.preventDefault(); e.stopImmediatePropagation(); return; }
     const t = KEYMAP[e.code]; if (t) { e.preventDefault(); e.stopImmediatePropagation(); if (tab === t) closeMenu(); else openMenu(t); }
     else if (e.code === 'Escape' && tab) { e.preventDefault(); e.stopImmediatePropagation(); closeMenu(); }
   };
@@ -241,12 +245,12 @@ export async function install(ow, opts = {}) {
     // HUD
     const hpK = st.hpMax ? st.hp / st.hpMax : 0; const hp = $('.hp'); hp.className = 'hp' + (hpK < 0.25 ? ' low' : hpK < 0.5 ? ' mid' : '');
     $('.hp i').style.width = `${Math.max(0, hpK * 100)}%`; $('.hpt').textContent = `${Math.ceil(st.hp)}/${st.hpMax}`; $('.lv').textContent = `Ур. ${prog.level}`;
-    $('.xp i').style.width = `${prog.level >= 30 ? 100 : (prog.xp / P.xpToNext(prog.level)) * 100}%`; $('.gold').textContent = `◈ ${inv.gold}  ·  ОН ${prog.sp}  ОХ ${prog.ap}  ОТ ${prog.tp}${inHub() ? ' · F — торговец' : ''}`;
+    $('.xp i').style.width = `${prog.level >= 30 ? 100 : (prog.xp / P.xpToNext(prog.level)) * 100}%`; $('.gold').textContent = `◈ ${inv.gold}  ·  ОН ${prog.sp}  ОХ ${prog.ap}  ОТ ${prog.tp}${inHub() ? ' · F — торговец' : resourceHere() ? ' · F — собрать ' + itemName(resourceHere()) : ''}`;
     const q = P.questText(qlog); qt.innerHTML = `<b>${esc(q.title)}</b>${esc(q.step)}`;
   }
   const iv = opts.externalTick ? null : setInterval(tick, 100);
   applyStats(); if (loaded) loadFrom(loaded); tick(0);
-  const api = { get prog() { return prog; }, get inv() { return inv; }, get quests() { return qlog; }, store, openMenu, closeMenu, gainXp, snap, tick, questProgress, inHub, get menuOpen() { return !!tab; },
+  const api = { get prog() { return prog; }, get inv() { return inv; }, get quests() { return qlog; }, store, openMenu, closeMenu, gainXp, snap, tick, questProgress, inHub, resourceHere, harvest, get menuOpen() { return !!tab; },
     buy(id) { const offer = SHOP.stock.find(x => x[0] === id); if (!inHub() || !offer || inv.count(id) >= (ITEMS[id]?.stack ?? 99)) return false; const ok = inv.buy(id, offer[1]); st.gold = inv.gold; if (ok) { say(`Куплено: ${itemName(id)}`); questProgress({ type: 'collect', item: id, have: inv.count(id) }); } return ok; },
     sell(uid) { if (!inHub()) return 0; const n = inv.sell(uid); st.gold = inv.gold; return n; },
     autosave: () => autosaver.trigger('manual'), save: (s = 'slot1') => store.save(s, snap()), load: (s) => store.load(s).then((x) => x && loadFrom(x)),

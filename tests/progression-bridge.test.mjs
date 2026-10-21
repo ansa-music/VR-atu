@@ -4,11 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { CREATURE_MOBS, canonicalMob, createProgressionBridge, MARKET, nearMarket, bossBiomeAt } from '../js/world/progression-bridge.js';
 import { BIOMES } from '../shared/defs/world.js';
-import { createProgression, createQuestLog, questEvent, addXp } from '../js/world/progression.js';
+import { createProgression, createQuestLog, questEvent, addXp, harvestQuestResource, applyQuestReward } from '../js/world/progression.js';
 import { Inventory, rollMobLoot } from '../js/world/inventory.js';
 import { createSaveStore, createAutosaver, snapshot, exportB64, importB64 } from '../js/world/save.js';
 import { POIS } from '../shared/defs/pois.js';
 import { BOSSES } from '../shared/defs/enemies.js';
+import { QUESTS } from '../shared/defs/quests.js';
 
 test('каждый тип каждого биома соответствует канону; кальдера = Игнарок', () => {
   for (const [biome, types] of Object.entries(CREATURE_MOBS)) for (const [type, id] of Object.entries(types)) {
@@ -87,4 +88,28 @@ test('level-up после предыдущего автосейва остаёт
   await a.trigger('hub'); level = 2; assert.equal(await a.trigger('levelup'), false);
   await a.tick(4); assert.equal(calls.length, 1);
   await a.tick(1); assert.deepEqual(calls, [{ level: 1 }, { level: 2 }]);
+});
+
+test('все 12 сюжетных заданий достижимы: ресурсы биомов собираются один раз на POI и сохраняются', () => {
+  const p = createProgression(), log = createQuestLog(), inv = new Inventory();
+  for (let guard = 0; log.active && guard < 100; guard++) {
+    const q = QUESTS[log.active], step = q.steps[log.step]; let done;
+    if (step.type === 'collect') {
+      const sites = POIS.filter(poi => poi.biome === q.biome);
+      for (const poi of sites) {
+        if (harvestQuestResource(p, log, inv, poi)) {
+          assert.equal(harvestQuestResource(p, log, inv, poi), null);
+          done = questEvent(log, { type: 'collect', item: step.item, have: inv.count(step.item) });
+          if (inv.count(step.item) >= step.n) break;
+        }
+      }
+      assert.ok(inv.count(step.item) >= step.n, `${q.title}: ${step.item}`);
+    } else for (let i = 0; i < (step.n || 1); i++) {
+      done = questEvent(log, { ...step, type: ['puzzle', 'interact', 'photo'].includes(step.type) ? 'interact' : step.type });
+    }
+    if (done) { const reward = applyQuestReward(p, done); for (const item of reward.items) inv.add(item); }
+  }
+  assert.equal(log.active, null); assert.equal(log.done.length, 12);
+  const restored = importB64(exportB64(snapshot({ progression: p, inventory: inv, questLog: log, player: { pos: [1180, 26, 1300] } })));
+  assert.deepEqual(restored.progression.harvested, p.harvested); assert.equal(restored.questLog.done.length, 12);
 });
