@@ -8,6 +8,7 @@ import { makeGradientMap, SHARED } from '../render/toon.js';
 import { createSky } from './sky.js';
 import { createWater } from './water.js';
 import { createGrass } from './grass.js';
+import { createProps } from './props.js';
 import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
 
 /** Пресет мира по уровню качества игры: Quest → quest, телефон → phone, ПК → pc_low / pc_high. */
@@ -74,6 +75,9 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
   scene.add(group);
 
   const spawn = { x: terrain.spawn.x, z: terrain.spawn.z, y: sampler.heightAt(terrain.spawn.x, terrain.spawn.z) };
+  // деревья, камни и цветы (Kenney Nature Kit, CC0) — грузятся в фоне, мир не ждёт
+  let props = null;
+  createProps({ sampler, center: spawn, seaLevel, presetId }).then((r) => { props = r; group.add(r.group); }).catch((e) => console.warn('[world] декор не загрузился', e));
   const wTmp = new Float64Array(BIOME_IDS.length);
   const headTmp = new THREE.Vector3(spawn.x, spawn.y + 1.6, spawn.z);
   sampler.biomeWeightsAt(spawn.x, spawn.z, wTmp);
@@ -136,7 +140,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
     /** Перевести время суток (часы 0–24), mul — скорость (1 = сутки за 40 мин). */
     setTime(h, mul) { sky.setTime(h, mul); },
     stats() {
-      return { preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, ...chunks.stats, triangles: chunks.triangles() };
+      return { preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, props: props?.stats ?? null, ...chunks.stats, triangles: chunks.triangles() };
     },
   };
 }
