@@ -9,6 +9,7 @@ import { createSky } from './sky.js';
 import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { createProps } from './props.js';
+import { createAmbientAudio } from './ambient-audio.js';
 import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
 import { DAMAGE_TYPE_VFX } from '../../shared/defs/damage-vfx.js';
 
@@ -99,6 +100,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
   let viewH = 900;
 
   let biome = sampler.biomeAt(spawn.x, spawn.z);
+  const nature = createAmbientAudio(); // птицы и пар (CC0-файлы)
   const push = [0, 0];
 
   return {
@@ -132,6 +134,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
       water.update(dt, head, fog, light);
       biome = sampler.biomeAt(head.x, head.z);
       ambient.setStyle(ambientStyle(biome, sky.night));
+      nature.update(dt, biome, sky.night);
       if (renderer) viewH = renderer.xr.isPresenting ? 1700 : renderer.domElement.height;
       ambient.update(dt, head, viewH);
       particles.update(dt, viewH);
