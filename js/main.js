@@ -124,7 +124,7 @@ const soloEnvironment = scene.children.filter(obj => !envBefore.has(obj) && !obj
 let world = null;
 if (WORLD_MODE) {
   try {
-    const worldMod = await import('./world/index.js');
+    const worldMod = await import('./world/index.js' + new URL(import.meta.url).search); // версия как у main.js — без старого кэша
     const coarse = !!globalThis.matchMedia?.('(pointer: coarse)').matches;
     const presetId = worldMod.worldPresetId(quality, { coarse, override: urlParams.get('wq') });
     const timeOverride = urlParams.has('time') ? Number(urlParams.get('time')) : null;
