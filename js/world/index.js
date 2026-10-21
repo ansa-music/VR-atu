@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { WORLD_CONFIG } from './config.js';
 import { generateTerrain, createTerrainSampler, BIOME_IDS } from './heightmap.js';
-import { createTerrainChunks } from './chunks.js';
+const { createTerrainChunks } = await import('./chunks.js' + new URL(import.meta.url).search);
 import { makeGradientMap, SHARED } from '../render/toon.js';
 import { createSky } from './sky.js';
 import { createWater } from './water.js';
@@ -54,7 +54,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
   group.name = 'open-world';
   const gradient = makeGradientMap([120, 200, 255]);
   const groundMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: gradient });
-  const chunks = createTerrainChunks({ terrain, rings: preset.lodRings, material: groundMat });
+  const chunks = createTerrainChunks({ terrain, rings: preset.lodRings, material: groundMat, strides: presetId === "quest" ? [2, 4, 8] : undefined });
   group.add(chunks.group);
 
   // небо и сутки, свет (раздел 1.2.5)

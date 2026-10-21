@@ -12,6 +12,9 @@ export const RARITY_COLOR = Object.freeze(Object.fromEntries(RARITIES.map((r) =>
 export const RARITY_RU = Object.freeze({ common: 'Обычный', uncommon: 'Необычный', rare: 'Редкий', epic: 'Эпический', legendary: 'Легендарный' });
 export const SLOT_RU = Object.freeze({ weapon: 'Оружие', bracer: 'Наруч', head: 'Голова', body: 'Тело', hands: 'Руки', legs: 'Ноги', amulet: 'Амулет', ring1: 'Кольцо 1', ring2: 'Кольцо 2' });
 export const GEAR_CAP = 60;
+const AMMO_RU = { it_ammo_pistol: 'Пистолетные патроны', it_ammo_rifle: 'Винтовочные патроны', it_ammo_shell: 'Дробовые патроны', it_ammo_sniper: 'Снайперские патроны', it_arrow: 'Стрела', it_bolt: 'Болт', it_fuel: 'Топливо', it_ammo_cell: 'Энергоячейка', it_rune_grenade: 'Рунная граната' };
+export const itemLabel = id => AMMO_RU[id] || ITEMS[id]?.name || ARTIFACTS[id]?.name || WEAPONS[id]?.name || id;
+const TYPE_RU = { physical: 'физический', fire: 'огонь', frost: 'мороз', lightning: 'молния', arcane: 'аркана', poison: 'яд', swamp: 'болото', cold: 'холод', heat: 'жара', heat_sun: 'зной', thorns: 'шипы' };
 const ARMOR_BASES = { head: ['Шлем стража', 'Капюшон следопыта', 'Тюбетейка-оберег'], body: ['Чапан странника', 'Кольчуга', 'Броня Самұрық'], hands: ['Перчатки охотника', 'Наручи кузнеца'],
   legs: ['Сапоги степняка', 'Поножи'], bracer: ['Арканный наруч', 'Рунный наруч'], amulet: ['Тұмар', 'Амулет звезды'], ring: ['Кольцо огня', 'Серебряный перстень', 'Кольцо ветра'] };
 const AFFIX_RU = { af_dmg_type: 'урон {t}', af_skill_dmg: 'урон навыков', af_weapon_dmg: 'урон оружия', af_vs_status: 'урон по целям со статусом', af_airborne: 'урон в воздухе', af_weaken: 'ослабление',
@@ -51,7 +54,7 @@ export function rollGear({ slot, il = 1, rarity = 'common', r = Math.random } = 
   else g.name = pick(ARMOR_BASES[slotKey(slot)] || ['Снаряжение'], r);
   return g;
 }
-export function affixText(a) { const v = Math.abs(a.value) < 1 && a.id !== 'af_status_every' ? `+${Math.round(a.value * 100)} %` : `+${a.value}`; return `${v} ${(AFFIX_RU[a.id] || a.id).replace('{t}', a.type || '')} (T${a.tier})`; }
+export function affixText(a) { const v = Math.abs(a.value) < 1 && a.id !== 'af_status_every' ? `+${Math.round(a.value * 100)} %` : `+${a.value}`; return `${v} ${(AFFIX_RU[a.id] || a.id).replace('{t}', TYPE_RU[a.type] || a.type || '')} (T${a.tier})`; }
 export const sellPrice = (g) => Math.round((5 + g.il * 2) * (1 + RARITIES.indexOf(g.rarity) * 1.5));
 
 /** Лут с таблицы моба (MOBS[].loot / BOSSES[].loot). Возвращает {gold, items:[[id,n]], gear:[...]}. */

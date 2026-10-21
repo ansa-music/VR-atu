@@ -5,6 +5,10 @@ import { POINTS, ATTRIBUTES, CONSTELLATIONS } from '../../shared/defs/progressio
 import { SKILLS, RANK_LEVEL_REQ, RANK_COST_SP } from '../../shared/defs/skills.js';
 import { MOBS, BOSSES } from '../../shared/defs/enemies.js';
 import { QUESTS } from '../../shared/defs/quests.js';
+import { ITEMS } from '../../shared/defs/items.js';
+import { NPCS } from '../../shared/defs/pois.js';
+import { KZ_POIS, KZ_BOSSES } from '../../shared/defs/theme_kz.js';
+import { BIOMES } from '../../shared/defs/world.js';
 
 export const MAX_LEVEL = LEVEL_CURVE.maxLevel;
 export const ATTR_KEYS = Object.freeze(['vit', 'agi', 'wil', 'pre']);
@@ -83,13 +87,25 @@ export function buyConstellation(p, key) {
 
 // ───────── Трекер основной линии квестов ─────────
 export function createQuestLog() { return { active: 'q_main_01', step: 0, counters: {}, done: [] }; }
+// Ресурсы биома у открытых POI: в текущем мире нет отдельного сборщика растений.
+// Один ресурс текущего задания на место; отметки входят в обычный снимок прогрессии.
+export function questResource(p, log, poi) {
+  const step = QUESTS[log.active]?.steps[log.step];
+  if (step?.type !== 'collect' || !BIOMES[poi?.biome]?.resources.includes(step.item)) return null;
+  return p.harvested?.includes(`${poi.id}:${step.item}`) ? null : step.item;
+}
+export function harvestQuestResource(p, log, inventory, poi) {
+  const item = questResource(p, log, poi);
+  if (!item || inventory.count(item) >= (ITEMS[item]?.stack ?? 99) || !inventory.add(item, 1)) return null;
+  (p.harvested ||= []).push(`${poi.id}:${item}`); return item;
+}
 /** ev: {type:'kill',mob}|{type:'goto'|'interact',poi}|{type:'collect',item,have}|{type:'talk',npc}|{type:'boss',boss}. Возвращает выполненный квест или null. */
 export function questEvent(log, ev) {
   const q = QUESTS[log.active]; if (!q) return null; const st = q.steps[log.step]; if (!st) return null;
   let hit = false;
   if (st.type === 'kill' && ev.type === 'kill' && ev.mob === st.mob) { log.counters.n = (log.counters.n || 0) + 1; hit = log.counters.n >= (st.n || 1); }
   else if ((st.type === 'goto' || st.type === 'interact' || st.type === 'puzzle' || st.type === 'photo') && (ev.type === 'goto' || ev.type === 'interact') && ev.poi === st.poi) hit = true;
-  else if (st.type === 'collect' && ev.type === 'collect' && ev.item === st.item) hit = (ev.have || 0) >= (st.n || 1);
+  else if (st.type === 'collect' && ev.type === 'collect' && ev.item === st.item) { log.counters.n = ev.have || 0; hit = log.counters.n >= (st.n || 1); }
   else if (st.type === 'talk' && ev.type === 'talk' && ev.npc === st.npc) hit = true;
   else if (st.type === 'boss' && (ev.type === 'boss' || ev.type === 'kill') && (ev.boss || ev.mob) === st.boss) hit = true;
   else if (st.type === 'escort' && ev.type === 'goto' && ev.poi === st.poi) hit = true;
@@ -102,7 +118,9 @@ export function questText(log) {
   const q = QUESTS[log.active]; if (!q) return { title: 'Основная линия пройдена', step: '' };
   const s = q.steps[log.step] || {}; const n = s.n ? ` (${log.counters.n || 0}/${s.n})` : '';
   const verb = { goto: 'Дойти до', interact: 'Активировать', kill: 'Победить', collect: 'Собрать', talk: 'Поговорить:', boss: 'Босс:', puzzle: 'Решить загадку:', photo: 'Сфотографировать', escort: 'Сопроводить до' }[s.type] || s.type;
-  return { id: log.active, title: q.title, level: q.level, step: `${verb} ${(s.poi || s.mob || s.item || s.npc || s.boss || '').replace(/^(poi_|m_|it_|npc_|boss_)/, '')}${n}`, stepIdx: log.step, steps: q.steps.length };
+  const id = s.boss || s.mob || s.item || s.npc || s.poi || '';
+  const label = KZ_POIS[id]?.nameRu || KZ_POIS[id]?.nameKk || KZ_BOSSES[id]?.nameKk || MOBS[id]?.name || ITEMS[id]?.name || NPCS[id]?.name || BOSSES[id]?.name || id;
+  return { id: log.active, title: q.title, level: q.level, step: `${verb} ${label}${n}`, stepIdx: log.step, steps: q.steps.length };
 }
 /** Награда квеста → прогрессия. Возвращает {xp, ups, items, skills}. */
 export function applyQuestReward(p, qid) {

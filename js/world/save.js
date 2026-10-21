@@ -18,8 +18,12 @@ export function migrate(s) {
   while (v < SAVE_VERSION) { s = migrations[v](s); v = s.v; } return s;
 }
 export function validate(s) {
-  const p = s?.progression; if (!p || !(p.level >= 1 && p.level <= 30) || !Number.isFinite(p.xp)) return 'progression';
-  if (!s.inventory || !Number.isFinite(s.inventory.gold)) return 'inventory'; if (!Array.isArray(s.player?.pos)) return 'player';
+  const p = s?.progression; if (!p || !(p.level >= 1 && p.level <= 30) || !Number.isInteger(p.level) || !Number.isFinite(p.xp) || p.xp < 0) return 'progression';
+  if (!p.attrs || ['vit', 'agi', 'wil', 'pre'].some(k => !Number.isFinite(p.attrs[k]) || p.attrs[k] < 0 || p.attrs[k] > 30)) return 'progression.attrs';
+  if (!s.inventory || !Number.isFinite(s.inventory.gold) || s.inventory.gold < 0) return 'inventory';
+  if (!Array.isArray(s.player?.pos) || s.player.pos.length !== 3 || !s.player.pos.every(Number.isFinite)) return 'player';
+  if (s.questLog && (!Number.isInteger(s.questLog.step) || s.questLog.step < 0 || !Array.isArray(s.questLog.done) || !s.questLog.counters)) return 'questLog';
+  if (s.world?.discovered && !Array.isArray(s.world.discovered)) return 'world';
   return null;
 }
 /** Собрать снимок. parts = {progression, inventory(Inventory|json), questLog, player:{pos,rotY,hp,shield,energy}, world:{time, discovered:[]}, stats, playTime} */
@@ -29,7 +33,8 @@ export function snapshot(parts) {
     player: parts.player, progression: parts.progression, inventory: inv, questLog: parts.questLog, world: parts.world || {}, stats: parts.stats || {} }));
 }
 export const exportB64 = (s) => (typeof btoa === 'function' ? btoa(unescape(encodeURIComponent(JSON.stringify(s)))) : Buffer.from(JSON.stringify(s), 'utf8').toString('base64'));
-export const importB64 = (b) => migrate(JSON.parse(typeof atob === 'function' ? decodeURIComponent(escape(atob(b.trim()))) : Buffer.from(b.trim(), 'base64').toString('utf8')));
+export const importB64 = (b) => checked(migrate(JSON.parse(typeof atob === 'function' ? decodeURIComponent(escape(atob(b.trim()))) : Buffer.from(b.trim(), 'base64').toString('utf8'))));
+function checked(s) { const bad = validate(s); if (bad) throw new Error('сейв повреждён: ' + bad); return s; }
 
 function memoryBackend() { const m = new Map(); return { kind: 'memory', get: async (k) => m.get(k) ?? null, put: async (k, v) => { m.set(k, v); }, del: async (k) => { m.delete(k); }, keys: async () => [...m.keys()] }; }
 function lsBackend(ls) {
@@ -53,7 +58,7 @@ export async function createSaveStore({ backend } = {}) {
   return {
     kind: be.kind,
     async save(slot, snap) { if (!SLOTS.includes(slot)) throw new Error('слот'); const bad = validate(snap); if (bad) throw new Error('сейв не прошёл проверку: ' + bad); await be.put(slot, snap); return true; },
-    async load(slot) { const s = await be.get(slot); return s ? migrate(s) : null; },
+    async load(slot) { const s = await be.get(slot); return s ? checked(migrate(s)) : null; },
     async list() { const out = []; for (const k of SLOTS) { const s = await be.get(k); if (s) out.push({ slot: k, level: s.progression?.level ?? s.player?.level, savedAt: s.savedAt, playTime: s.playTime }); } return out; },
     async remove(slot) { await be.del(slot); },
     async latest() { const l = (await this.list()).sort((a, b) => b.savedAt - a.savedAt)[0]; return l ? this.load(l.slot) : null; },
@@ -61,7 +66,7 @@ export async function createSaveStore({ backend } = {}) {
 }
 /** Автосейв: tick(dt, {inCombat}) — каждые AUTOSAVE_S вне боя; trigger(reason) — костёр/хаб/квест (не чаще раза в 5 с). */
 export function createAutosaver(store, getSnapshot, { onSaved } = {}) {
-  let t = 0, last = -1e9, combatT = 0, busy = false, now = 0;
-  const run = async (reason) => { if (busy || now - last < 5) return false; busy = true; try { await store.save('auto', getSnapshot()); last = now; t = 0; onSaved?.(reason); return true; } catch (e) { console.warn('[save]', e?.message); return false; } finally { busy = false; } };
-  return { tick(dt, { inCombat = false } = {}) { now += dt; combatT = inCombat ? COMBAT_GRACE_S : Math.max(0, combatT - dt); t += dt; if (t >= AUTOSAVE_S && combatT <= 0) return run('timer'); return null; }, trigger: (r) => run(r), get sinceLast() { return now - last; } };
+  let t = 0, last = -1e9, combatT = 0, busy = false, now = 0, pending = null;
+  const run = async (reason) => { if (busy || now - last < 5) { pending = reason; return false; } pending = null; busy = true; try { await store.save('auto', getSnapshot()); last = now; t = 0; onSaved?.(reason); return true; } catch (e) { console.warn('[save]', e?.message); return false; } finally { busy = false; } };
+  return { tick(dt, { inCombat = false } = {}) { now += dt; combatT = inCombat ? COMBAT_GRACE_S : Math.max(0, combatT - dt); t += dt; if (pending && (pending !== 'timer' || combatT <= 0) && !busy && now - last >= 5) return run(pending); if (t >= AUTOSAVE_S && combatT <= 0) return run('timer'); return null; }, trigger: (r) => run(r), get sinceLast() { return now - last; } };
 }
