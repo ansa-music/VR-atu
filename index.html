@@ -145,6 +145,11 @@
     .ov-new span { color: #ffc45c; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; margin-right: 6px; }
     .ov-new b { color: #fff; }
     .ov-world { margin: 12px 0 0; }
+    .ov-cast { margin: 12px auto 0; display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: center; align-items: center; color: #bfe9ff; font-size: clamp(13px, 2vw, 15px); }
+    .ov-cast b { color: #fff; letter-spacing: .12em; }
+    .ov-cast-watch { display: inline-flex; gap: 6px; }
+    .ov-cast input { width: 8.5em; padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(159, 231, 255, .5); background: rgba(7, 11, 26, .6); color: #fff; font: inherit; letter-spacing: .1em; }
+    .ov-cast button { padding: 6px 12px; border-radius: 10px; border: 1px solid rgba(159, 231, 255, .6); background: rgba(62, 197, 255, .18); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
     .ov-world a {
       display: inline-block; padding: 7px 16px; border-radius: 999px; text-decoration: none;
       border: 1px solid rgba(126, 217, 87, .6); background: rgba(126, 217, 87, .1);
@@ -301,6 +306,10 @@
       <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
       <p class="ov-new"><span>✦ Новое в VR-шлеме</span> <b>Академия ATU — Арена магов</b>: магия, навыки, противники</p>
       <p class="ov-world"><a id="world-link" href="?mode=world">🌍 Открытый мир · ранний доступ</a></p>
+      <form class="ov-cast" id="cast-watch">
+        <span>📺 Код трансляции этого устройства: <b id="cast-code">——</b></span>
+        <span class="ov-cast-watch"><input id="cast-input" inputmode="numeric" maxlength="6" placeholder="код из шлема" aria-label="Код трансляции"><button type="submit">Смотреть трансляцию</button></span>
+      </form>
 
       <button id="play" type="button" disabled>ОДИНОЧНАЯ ИГРА</button>
 
@@ -450,7 +459,7 @@
 
   <script type="module" src="js/overlay.js?v=atu-world-1"></script>
   <script type="module" src="js/skin-ui.js?v=atu-netplay-20261016c"></script>
-  <script type="module" src="js/main.js?v=atu-world-5"></script>
+  <script type="module" src="js/main.js?v=atu-cast-1"></script>
   <script type="module" src="js/multiplayer-ui.js?v=atu-saved-name-20261016"></script>
 </body>
 </html>

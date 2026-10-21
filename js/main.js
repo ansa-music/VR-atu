@@ -58,6 +58,7 @@ const HINT = 'ЛКМ — огонь · ПКМ — прицел · R — пере
 const quality = detectQuality();
 const urlParams = new URLSearchParams(location.search);
 const WORLD_MODE = urlParams.get('mode') === 'world'; // «Открытый мир»: рельеф вместо арены, без раундов тира
+const SPECTATE = (urlParams.get('spectate') || '').replace(/\D/g, '').slice(0, 6) || null; // экран зрителя: код трансляции
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 let pixelCap = Math.min(devicePixelRatio, quality.pixelRatio); // динамическое разрешение опускает его при просадках
 renderer.setPixelRatio(pixelCap);
@@ -2229,7 +2230,7 @@ const WORLD_CAP = { wisp: 4, fairy: 1, skull: 2, guardian: 1, eye: 2 };
 const WORLD_CRATER = { x: 1390, z: 320 }; // кальдера: здесь живёт колосс
 let worldHp = WORLD_MAX_HP, worldHurtT = 0, worldSpawnT = 3, worldBossCd = 0;
 function updateWorldCreatures(dt) {
-  if (!world || !combatOn || !enemies) return;
+  if (!world || !combatOn || !enemies || SPECTATE) return;
   worldHurtT -= dt;
   if (worldHurtT <= 0 && worldHp < WORLD_MAX_HP) worldHp = Math.min(WORLD_MAX_HP, worldHp + dt * 0.5);
   worldBossCd -= dt;
@@ -2281,6 +2282,174 @@ function pcBowOrBlade(w, d) {
   playSpell(n ? 'sword-hit' : 'sword-swing');
   pcGun()?.fire?.();
   if (wpnMod.bladeWave(w, 1)) slashes?.spawn?.({ origin: raycaster.ray.origin.clone(), dir: raycaster.ray.direction.clone(), up: new THREE.Vector3(0, 1, 0), power: 1 }, d.wave);
+}
+
+// ---------- «экран зрителя» по Wi-Fi: шлем передаёт позу, ПК рисует тот же мир глазами игрока ----------
+const castMod = await load('./cast.js');
+const ENEMY_TYPE_IDS = ['wisp', 'fairy', 'skull', 'guardian', 'eye', 'boss'];
+const r3 = (x) => Math.round(x * 1000) / 1000;
+const castQ = new THREE.Quaternion(), castP = new THREE.Vector3(), castS = new THREE.Vector3();
+const castSender = SPECTATE ? null : safeCall(castMod.createCastSender, {
+  onStatus: (s, info) => {
+    if (s === 'ready' && renderer.xr.isPresenting) notify('📺 Трансляция: код ' + info, '#9fe7ff');
+    if (s === 'error') console.warn('Трансляция:', info);
+  },
+  onViewer: (n) => notify(n ? '📺 Зритель подключился' : '📺 Зритель отключился', '#9fe7ff'),
+});
+// стартовый экран: код этого устройства и «Смотреть трансляцию»
+{
+  const codeEl = document.getElementById('cast-code');
+  if (codeEl && castMod.castCode) codeEl.textContent = castMod.castCode();
+  const form = document.getElementById('cast-watch');
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = (document.getElementById('cast-input')?.value || '').replace(/\D/g, '');
+    if (v.length === 6) location.href = '?spectate=' + v;
+  });
+}
+if (castSender && urlParams.get('cast') === '1') castSender.start();
+renderer.xr.addEventListener('sessionstart', () => {
+  if (!castSender) return;
+  castSender.start();
+  notify('📺 Трансляция: код ' + castSender.code, '#9fe7ff');
+});
+
+let castT = 0;
+function castState(dt) {
+  if (!castSender?.viewers) return;
+  if ((castT -= dt) > 0) return;
+  castT = 1 / 30;
+  camera.getWorldQuaternion(castQ);
+  const hands = [];
+  if (renderer.xr.isPresenting) {
+    for (const c of controllers) {
+      if (!c.visible || !c.userData.src) continue;
+      c.matrixWorld.decompose(castP, castQ.clone(), castS);
+      const q = new THREE.Quaternion(); c.getWorldQuaternion(q);
+      hands.push([c.userData.src.handedness === 'left' ? 0 : 1, r3(castP.x), r3(castP.y), r3(castP.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), c === weaponHand ? 1 : 0]);
+    }
+    camera.getWorldQuaternion(castQ);
+  }
+  const foes = [];
+  if (combatOn && enemies) for (const e of enemies.active) if (e.alive) foes.push([ENEMY_TYPE_IDS.indexOf(e.type), r3(e.center.x), r3(e.center.y), r3(e.center.z)]);
+  castSender.send({
+    v: 1, mode: world ? 'world' : fantasy ? 'fantasy' : 'range', xr: renderer.xr.isPresenting,
+    h: [r3(headPos.x), r3(headPos.y), r3(headPos.z), r3(castQ.x), r3(castQ.y), r3(castQ.z), r3(castQ.w)],
+    hands, w: arsenal.current.def.id, c: combatOn, hr: world ? r3(world.hour) : null, e: foes,
+    s: score, hp: world ? Math.ceil(worldHp) : director?.hp ?? null,
+  });
+}
+
+// зритель (?spectate=КОД): камера — голова игрока, руки с оружием, существа — светящиеся шары
+const spectator = { state: null, has: false, head: new THREE.Vector3(), quat: new THREE.Quaternion(), pos: new THREE.Vector3(), rot: new THREE.Quaternion(), status: 'connecting' };
+const specLabel = SPECTATE ? (() => {
+  const el = document.createElement('div');
+  el.id = 'spectator-label';
+  el.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:20;padding:8px 16px;border-radius:999px;background:rgba(7,11,26,.72);border:1px solid rgba(159,231,255,.5);color:#dff6ff;font:700 15px system-ui;pointer-events:none';
+  document.body.appendChild(el);
+  return el;
+})() : null;
+const specHands = [0, 1].map(() => {
+  const g = new THREE.Group();
+  g.visible = false;
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), new THREE.MeshBasicMaterial({ color: 0x9fe7ff }));
+  g.add(ball);
+  scene.add(g);
+  g.userData.sets = null;
+  return g;
+});
+const specFoes = (() => {
+  const m = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.35, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 64);
+  m.count = 0;
+  m.frustumCulled = false;
+  m.visible = !!SPECTATE;
+  scene.add(m);
+  return m;
+})();
+const specM = new THREE.Matrix4(), specC = new THREE.Color(), specV = new THREE.Vector3(), specQ = new THREE.Quaternion(), specScale = new THREE.Vector3();
+let specModeSet = false;
+function setSpecStatus(s) {
+  spectator.status = s;
+}
+const castViewer = SPECTATE ? safeCall(castMod.createCastViewer, SPECTATE, {
+  onStatus: setSpecStatus,
+  onState: (s) => {
+    if (!s || s.v !== 1) return;
+    // режим как у игрока: открытый мир — своя страница
+    if ((s.mode === 'world') !== !!world) {
+      const u = new URL(location.href);
+      if (s.mode === 'world') u.searchParams.set('mode', 'world'); else u.searchParams.delete('mode');
+      location.replace(u.href);
+      return;
+    }
+    if (!specModeSet || (s.mode === 'fantasy') !== fantasy) { specModeSet = true; if (!world) setFantasy(s.mode === 'fantasy'); }
+    spectator.state = s;
+    spectator.status = 'connected';
+  },
+}) : null;
+if (SPECTATE) {
+  const ov = document.getElementById('overlay');
+  ov?.classList.add('is-hidden');
+  if (ov) ov.inert = true;
+  document.body.classList.remove('ov-open');
+  addEventListener('game:ready', () => { document.body.classList.remove('ov-open'); }, { once: true });
+}
+
+function updateSpectator(dt) {
+  const s = spectator.state;
+  if (specLabel) {
+    const st = spectator.status === 'connected' && s
+      ? `📺 Трансляция ${SPECTATE} · очки ${s.s ?? 0}${s.hp != null ? ' · ♥ ' + s.hp : ''}`
+      : spectator.status === 'error' ? `📺 ${SPECTATE}: нет связи с сервером знакомства` : `📺 Ждём игрока с кодом ${SPECTATE}…`;
+    if (specLabel.textContent !== st) specLabel.textContent = st;
+  }
+  viewModel.visible = false;
+  if (!s) return;
+  // камера = голова игрока (сглаженно)
+  spectator.head.set(s.h[0], s.h[1], s.h[2]);
+  spectator.quat.set(s.h[3], s.h[4], s.h[5], s.h[6]).normalize();
+  rig.position.set(0, 0, 0);
+  rig.rotation.set(0, 0, 0);
+  const first = !spectator.has;
+  spectator.has = true;
+  // своя сглаженная поза: обычный код ПК каждый кадр сбрасывает камеру к «росту»
+  spectator.pos.lerp(spectator.head, first ? 1 : 1 - Math.exp(-dt * 18));
+  spectator.rot.slerp(spectator.quat, first ? 1 : 1 - Math.exp(-dt * 10));
+  camera.position.copy(spectator.pos);
+  camera.quaternion.copy(spectator.rot);
+  camera.updateMatrixWorld(true);
+  updateHead();
+  // оружие игрока
+  const idx = arsenal.list.findIndex((w) => w.def.id === s.w);
+  if (s.c !== combatOn) setCombat(s.c);
+  if (idx >= 0 && idx !== arsenal.index) arsenal.select(idx);
+  if (world && s.hr != null && Math.abs(world.hour - s.hr) > 0.05) world.setTime(s.hr);
+  // руки
+  for (const g of specHands) g.visible = false;
+  for (const h of s.hands || []) {
+    const g = specHands[h[0]];
+    g.visible = true;
+    g.position.set(h[1], h[2], h[3]);
+    g.quaternion.set(h[4], h[5], h[6], h[7]);
+    if (!g.userData.sets) g.userData.sets = { classic: buildGunSet(g, 0xff7ad9), magic: combatReady ? buildFantasyGunSet(g) : {} };
+    const sets = g.userData.sets;
+    for (const [id, gun] of Object.entries(sets.classic)) gun.group.visible = !!h[8] && !s.c && id === s.w;
+    for (const [id, gun] of Object.entries(sets.magic)) gun.group.visible = !!h[8] && s.c && id === s.w;
+  }
+  // существа
+  let k = 0;
+  for (const f of s.e || []) {
+    if (k >= specFoes.instanceMatrix.count) break;
+    const type = ENEMY_TYPE_IDS[f[0]] || 'wisp';
+    const sc = type === 'boss' ? 4 : type === 'guardian' ? 2.2 : 1;
+    specM.compose(specV.set(f[1], f[2], f[3]), specQ.identity(), specScale.setScalar(sc));
+    specFoes.setMatrixAt(k, specM);
+    specFoes.setColorAt(k, specC.setHex(ENEMY_COLORS[type] ?? 0xffffff));
+    k++;
+  }
+  specFoes.count = k;
+  specFoes.instanceMatrix.needsUpdate = true;
+  if (specFoes.instanceColor) specFoes.instanceColor.needsUpdate = true;
 }
 
 // ---------- динамическое качество ----------
@@ -2360,8 +2529,10 @@ function frame(_time, _xrFrame, forcedDt) {
     yaw -= dx * sens;
     pitch = rand.clamp(pitch - dy * sens * (userSettings.invertY ? -1 : 1), -1.4, 1.4);
   }
-  updateMovement(dt);
-  updateAim(dt, time);
+  if (!SPECTATE) { // зритель не ходит сам: камера — голова игрока
+    updateMovement(dt);
+    updateAim(dt, time);
+  }
   updateHead();
   updateMultiplayerPresence(performance.now(), dt);
   sharedArena.update(dt);
@@ -2451,6 +2622,8 @@ function frame(_time, _xrFrame, forcedDt) {
   if (xr && arsenal.current.def.zoom) {
     try { renderScopeLens(); } catch (e) { console.warn(e); }
   }
+  if (SPECTATE) updateSpectator(dt);
+  else castState(dt);
   renderer.render(scene, camera);
   if (xr) vrMirror.render(scene, camera, dt);
   if (!ready) { ready = true; emit('game:ready'); }
@@ -2503,6 +2676,7 @@ if (/[?&]debug\b/.test(location.search)) {
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
+    get spectator() { return { code: SPECTATE, status: spectator.status, foes: specFoes.count, hands: specHands.filter((g) => g.visible).length, sendCode: castSender?.code, viewers: castSender?.viewers }; },
     get mirror() { return { enabled: vrMirror.enabled, frames: vrMirror.frames }; },
     get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },
     spawn(type) { return !!enemies?.spawn(type); },
