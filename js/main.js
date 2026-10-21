@@ -968,9 +968,9 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !renderer.xr.isPresenting) { e.preventDefault(); jumpRequested = true; }
   if (world && !e.repeat && castSkillKey(e.code)) return;
   if (e.code === 'KeyR') arsenal.current.startReload();
-  if (e.code === 'KeyB') { if (combatOn && arsenal.current.def.id === 'staff') wpnMod.nextElement?.(arsenal.current); else arsenal.current.toggleMode?.(); }
+  if (e.code === 'KeyB' && !swords?.on) { if (combatOn && arsenal.current.def.id === 'staff') wpnMod.nextElement?.(arsenal.current); else arsenal.current.toggleMode?.(); }
   const digit = /^Digit([1-9])$/.exec(e.code);
-  if (digit && Number(digit[1]) <= WEAPONS.length) arsenal.select(Number(digit[1]) - 1);
+  if (digit && Number(digit[1]) <= WEAPONS.length && !swords?.on) arsenal.select(Number(digit[1]) - 1);
   if (e.code === 'Enter' && !world && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 
@@ -1464,6 +1464,33 @@ function updateMovement(dt) {
   }
 }
 
+// заклинания и мечи открытого мира (создаются при старте мира)
+let spells = null, swords = null, swordPlayer = null;
+const swordState = { energy: 999, level: 1 }; // энергия мечей бесконечная — только откаты
+// луч по существам (для заклинаний и мечей)
+const enemyRaycaster = new THREE.Raycaster();
+function raycastEnemies(ro, rd, range) {
+  if (!enemies) return null;
+  enemyRaycaster.set(ro, rd); enemyRaycaster.near = 0; enemyRaycaster.far = range;
+  for (const h of enemyRaycaster.intersectObjects(enemies.meshes, false)) {
+    if (h.object.visible) return { object: h.object, instanceId: h.instanceId, point: h.point, distance: h.distance };
+  }
+  return null;
+}
+// кадр: заклинания и мечи; рывок меча двигает игрока
+const swordPrev = new THREE.Vector3();
+function updateSpellsAndSwords(dt) {
+  if (!world) return;
+  spells?.update(dt);
+  if (!swordPlayer) return;
+  if (renderer.xr.isPresenting) { if (swords?.on) swords.toggle(false); return; }
+  swordState.energy = 999;
+  swordPlayer.pos.set(headPos.x, groundY + feet, headPos.z);
+  swordPrev.copy(swordPlayer.pos);
+  swordPlayer.endFrame();
+  const dx = swordPlayer.pos.x - swordPrev.x, dz = swordPlayer.pos.z - swordPrev.z;
+  if (dx || dz) { rig.position.x += dx; rig.position.z += dz; }
+}
 // пыль при приземлении в открытом мире (формат эмиттера DAMAGE_TYPE_VFX)
 const LAND_DUST = { blend: 'alpha', count: 10, speed: [0.6, 1.6], spread: 85, life: [0.4, 0.8], size: [0.12, 0.45], gravity: -0.3, color: '#d9c7a3' };
 // открытый мир: шаг по рельефу под головой. Склон круче 45° и глубокая вода — стена
@@ -1959,13 +1986,13 @@ const skills = safeCall(skillsMod.createSkills, {
 // ПК в открытом мире: навыки по клавишам (в шлеме — жестами, как на арене)
 const SKILL_KEYS = {
   KeyQ: ['orb', 'Сфера'], KeyE: ['ki', 'Волна ки'], KeyV: ['flash', 'Шаг'], KeyX: ['focus', 'Восприятие'],
-  KeyZ: ['ult', 'Ульта'], KeyG: ['fireball', 'Огненный шар'], KeyT: ['lightning', 'Молния'], KeyH: ['shield', 'Щит'],
+  KeyZ: ['ult', 'Ульта'], KeyR: ['fireball', 'Огненный шар'], KeyT: ['lightning', 'Молния'], KeyH: ['shield', 'Щит'],
 };
 const SKILL_CD_ID = { fireball: 'rune', lightning: 'rune', shield: 'rune' };
 const skillDir = new THREE.Vector3();
 function castSkillKey(code) {
   const k = SKILL_KEYS[code];
-  if (!k || !skills?.castKey || renderer.xr.isPresenting) return false;
+  if (!k || !skills?.castKey || renderer.xr.isPresenting || spells?.state !== undefined && spells.state !== 'idle') return false;
   camera.getWorldDirection(skillDir);
   if (!skills.castKey(k[0], { headPos, dir: skillDir, feetY: groundY + feet })) {
     const left = skills.cooldown?.(SKILL_CD_ID[k[0]] || k[0]) || 0;
@@ -2578,7 +2605,27 @@ if (world) {
   setCombat(true); // магическое оружие и существа
   skills?.setEnabled?.(true);
   if (skills) skills.freeMana = true; // в мире навыки без маны — только откаты
-  setTimeout(() => notify('Навыки: Q сфера · E волна ки · V шаг · X замедление · Z ульта · G огненный шар · T молния · H щит', '#b49cff'), 2500);
+  // заклинания по рунам (раздел F) и мечевые навыки (раздел N) — на ПК; в шлеме руны и клинок арены
+  try {
+    const ver = new URL(import.meta.url).search;
+    const [spellMod, meleeMod2, adapterMod] = await Promise.all([
+      import('./world/spell-bridge.js' + ver), import('./world/melee.js' + ver), import('./world/enemy-adapter.js' + ver),
+    ]);
+    const enemyDeps = { enemies, raycastEnemies, scoreEnemy: (r, p) => scoreEnemy(r, p, null) };
+    spells = spellMod.createSpellBridge({
+      scene, camera, enemies, headPos, notify, fx, particles: world.particles, vfx: world.vfx,
+      ...enemyDeps, isActive: () => !!world && combatOn && !renderer.xr.isPresenting && !swords?.on,
+    });
+    swordPlayer = {
+      pos: new THREE.Vector3(), get yaw() { return yaw; }, set yaw(v) { yaw = v; }, xr: false, rig, dead: false, enabled: true,
+      touch: false, fire: false, firePressed: false, vignette: null, endFrame() {},
+    };
+    const swordRenderer = { domElement: renderer.domElement, xr: { getSession: () => null, getControllerGrip: () => ({ addEventListener() {} }) } };
+    swords = meleeMod2.install({ scene, camera, renderer: swordRenderer, player: swordPlayer, mobs: adapterMod.createMobAdapter(enemyDeps), state: swordState });
+    // без ограничений: все мечевые навыки открыты сразу (мастерство на максимуме), ограничивают только откаты
+    if (swords?.engine?.xp) for (const k of Object.keys(swords.engine.xp)) swords.engine.xp[k] = Math.max(swords.engine.xp[k], 1e6);
+  } catch (e) { console.warn('[world] заклинания или мечи не загрузились', e); }
+  setTimeout(() => notify('Навыки: Q сфера · E волна ки · V шаг · X замедление · Z ульта · R огненный шар · T молния · H щит · U заклинания · G меч', '#b49cff'), 2500);
   // название места по-казахски, ниже — по-русски
   world.onTitle = (t) => notify(t.kk + (t.ru && t.ru !== t.kk ? ' · ' + t.ru : ''), '#ffd23f');
   syncGunVisibility();
@@ -2652,6 +2699,7 @@ function frame(_time, _xrFrame, forcedDt, skipRender = false) {
   progressionBridge?.update(dt);
   progressionVr?.update(dt);
   updateWorldCreatures(dt);
+  updateSpellsAndSwords(dt);
   if (world && combatOn) for (const w of arsenal.list) if (w.manaFed && w.def.manaMax) w.mana = w.def.manaMax; // в мире без перезарядки
   if (world) world.combat = Math.min(1, (enemies?.count || 0) / 4);
 
@@ -2762,6 +2810,8 @@ if (/[?&]debug\b/.test(location.search)) {
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
     get scene() { return scene; },
+    get spells() { return spells; },
+    get swords() { return swords; },
     get spectator() { return { code: SPECTATE, status: spectator.status, foes: specFoes.count, hands: specHands.filter((g) => g.visible).length, sendCode: castSender?.code, viewers: castSender?.viewers }; },
     get mirror() { return { enabled: vrMirror.enabled, frames: vrMirror.frames }; },
     get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },
