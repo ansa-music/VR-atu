@@ -105,6 +105,7 @@ resume?.addEventListener('click', resumeGame);
 // Escape releases captured mouse input; a second Escape resumes from the menu.
 window.addEventListener('keydown', e => {
   if (xrActive) return;
+  if (new URLSearchParams(location.search).get('mode') === 'world' && (e.code === 'Tab' || (e.code === 'Escape' && window.__OW_PROG?.menuOpen))) return;
   if (e.code === 'Tab' && !e.repeat && overlay?.classList.contains('is-hidden')) {
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -124,7 +125,7 @@ window.addEventListener('keydown', e => {
 let mouseWasLocked = !!document.pointerLockElement;
 document.addEventListener('pointerlockchange', () => {
   const locked = !!document.pointerLockElement;
-  if (mouseWasLocked && !locked && !xrActive) setOpen(true);
+  if (mouseWasLocked && !locked && !xrActive && !window.__OW_PROG?.menuOpen) setOpen(true);
   mouseWasLocked = locked;
 });
 

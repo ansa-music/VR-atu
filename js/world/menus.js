@@ -11,9 +11,9 @@ import { BOSSES } from '../../shared/defs/enemies.js';
 import { QUESTS } from '../../shared/defs/quests.js';
 import { ATTRIBUTES, CONSTELLATIONS, GEAR_SLOTS } from '../../shared/defs/progression.js';
 import { ARTIFACTS } from '../../shared/defs/fantasy_extras.js';
-import * as P from './progression.js';
-import { Inventory, rollMobLoot, RARITY_COLOR, RARITY_RU, SLOT_RU, SHOP, affixText, sellPrice, rollGear, rollRarity } from './inventory.js';
-import { createSaveStore, createAutosaver, snapshot, exportB64, importB64 } from './save.js';
+const P = await import('./progression.js' + new URL(import.meta.url).search);
+const { Inventory, rollMobLoot, RARITY_COLOR, RARITY_RU, SLOT_RU, SHOP, itemLabel, affixText, sellPrice, rollGear, rollRarity } = await import('./inventory.js' + new URL(import.meta.url).search);
+const { createSaveStore, createAutosaver, snapshot, exportB64, importB64 } = await import('./save.js' + new URL(import.meta.url).search);
 
 const CSS = `
 #owm-hud{position:fixed;left:14px;top:12px;z-index:41;pointer-events:none;font:700 12px system-ui,sans-serif;color:#eafaff;text-shadow:0 1px 2px #000}
@@ -53,7 +53,8 @@ const CSS = `
 
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const itemName = (id) => ITEMS[id]?.name || ARTIFACTS[id]?.name || id;
+const ARCH_RU = { gunslinger: 'Стрелок', guardian: 'Страж', rogue: 'Ловкач', mystic: 'Мистик', common: 'Общие' };
+const itemName = itemLabel;
 
 /** Звук level-up: синтез (арпеджио + колокол), без файлов. */
 function chime(ctx, kind = 'level') {
@@ -82,17 +83,18 @@ export async function install(ow, opts = {}) {
   let prog = P.createProgression(), inv = new Inventory(), qlog = P.createQuestLog(), playTime = 0, kills = 0;
   inv.gold = st.gold || 0; for (const [k, n] of Object.entries(st.inv || {})) inv.add(k, n);
   const store = await createSaveStore(opts.saveBackend ? { backend: opts.saveBackend } : {});
-  if (!Q.has('owfresh')) { try { const s = await store.latest(); if (s) { prog = s.progression; inv = new Inventory(s.inventory); qlog = s.questLog || qlog; playTime = s.playTime || 0;
+  let loaded = null;
+  if (!Q.has('fresh') && !Q.has('owfresh')) { try { const s = await store.latest(); if (s) { loaded = s; prog = s.progression; inv = new Inventory(s.inventory); qlog = s.questLog || qlog; playTime = s.playTime || 0;
     if (s.player?.pos && ow.tp) ow.tp(s.player.pos[0], s.player.pos[2]); for (const id of s.world?.discovered || []) ow.discovered?.add(id); } } catch (e) { console.warn('[progression] load', e?.message); } }
   let audio = null; const getAudio = () => { try { audio ||= new (window.AudioContext || window.webkitAudioContext)(); audio.resume?.(); } catch {} return audio; };
 
   // ───── HUD ─────
-  const hud = el('div', null, `<div class="plate"><div class="lv">Lv 1</div><div><div class="nm">СТРАННИК · ${esc(prog.archetype)}</div><div style="display:flex;align-items:center"><div class="hp"><i></i></div><span class="hpt"></span></div><div class="xp"><i></i></div><div class="gold"></div></div></div>`);
-  hud.id = 'owm-hud'; const qt = el('div'); qt.id = 'owm-qt'; const lvl = el('div', null, '<h1>LEVEL UP!</h1><p></p>'); lvl.id = 'owm-lvl'; const toast = el('div'); toast.id = 'owm-toast';
+  const hud = el('div', null, `<div class="plate"><div class="lv">Ур. 1</div><div><div class="nm">СТРАННИК · ${esc(ARCH_RU[prog.archetype] || prog.archetype)}</div><div style="display:flex;align-items:center"><div class="hp"><i></i></div><span class="hpt"></span></div><div class="xp"><i></i></div><div class="gold"></div></div></div>`);
+  hud.id = 'owm-hud'; const qt = el('div'); qt.id = 'owm-qt'; const lvl = el('div', null, '<h1>НОВЫЙ УРОВЕНЬ!</h1><p></p>'); lvl.id = 'owm-lvl'; const toast = el('div'); toast.id = 'owm-toast';
   const menu = el('div'); menu.id = 'owm-menu'; // main.js прячет все прямые дети body, кроме #ow-root/#ow-hud — поэтому монтируемся внутрь #ow-hud
   const mount = document.getElementById('ow-hud') || document.body; mount.append(hud, qt, lvl, toast, menu);
   const $ = (s) => hud.querySelector(s);
-  function say(text, color = '#3ec5ff', ms = 2200) { const d = el('div', null, esc(text)); d.style.setProperty('--c', color); toast.appendChild(d); while (toast.children.length > 6) toast.firstChild.remove(); setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 450); }, ms); }
+  function say(text, color = '#3ec5ff', ms = 2200) { ow.notify?.(text, color); const d = el('div', null, esc(text)); d.style.setProperty('--c', color); toast.appendChild(d); while (toast.children.length > 6) toast.firstChild.remove(); setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 450); }, ms); }
 
   // ───── применение характеристик к состоянию среза ─────
   function applyStats() {
@@ -101,7 +103,7 @@ export async function install(ow, opts = {}) {
   }
   const vfx = [];
   function onLevelUps(ups) {
-    if (!ups?.length) return; const last = ups[ups.length - 1]; applyStats(); st.hp = st.hpMax; st.shield = st.shieldMax;
+    if (!ups?.length) return; const last = ups[ups.length - 1]; ow.levelUp?.(last.level); applyStats(); st.hp = st.hpMax; st.shield = st.shieldMax;
     lvl.querySelector('p').textContent = `Уровень ${last.level} · HP ${last.hpMax} · +${ups.reduce((s, u) => s + u.sp, 0)} ОН · +${ups.reduce((s, u) => s + u.ap, 0)} ОХ${ups.some((u) => u.tp) ? ' · +1 ОТ' : ''}`;
     lvl.classList.add('on'); setTimeout(() => lvl.classList.remove('on'), 2600); chime(getAudio(), 'level');
     try { const p = ow.player.pos; vfx.push(levelUpVfx(ow.scene, { x: p.x, y: (p.y ?? 1.6), z: p.z })); } catch {}
@@ -111,21 +113,25 @@ export async function install(ow, opts = {}) {
   function questProgress(ev) {
     const done = P.questEvent(qlog, ev); if (!done) return;
     const r = P.applyQuestReward(prog, done); for (const it of r.items) inv.add(it, 1);
-    say(`Квест выполнен: ${done}`, '#ffd23f', 3500); chime(getAudio(), 'quest'); onLevelUps(r.ups); autosaver.trigger('quest');
+    say(`Квест выполнен: ${QUESTS[done]?.title || done}`, '#ffd23f', 3500); chime(getAudio(), 'quest'); onLevelUps(r.ups); autosaver.trigger('quest');
     // collect-шаги следующего квеста могут быть уже выполнены
     { const s = QUESTS_STEP(qlog); if (s?.type === 'collect') questProgress({ type: 'collect', item: s.item, have: inv.count(s.item) }); }
   }
   const QUESTS_STEP = (log) => QUESTS[log.active]?.steps?.[log.step];
 
   // ───── хуки мобов: XP за убийство, лут по таблицам, гир-роллы ─────
-  const mobs = ow.mobs; const origKill = mobs.onKill;
+  const mobs = ow.mobs; const origKill = mobs.onKill, origLoot = mobs.onLoot;
   mobs.onKill = (m) => { origKill?.(m); kills++;
-    const xp = P.xpForKill(m, prog.level); gainXp(xp, m.def?.name || m.id);
-    questProgress({ type: 'kill', mob: m.id }); if (BOSSES[m.id]) questProgress({ type: 'boss', boss: m.id });
+    const xp = P.xpForKill(m, prog.level);
     const loot = rollMobLoot(m, { playerL: prog.level, lootFind: P.derivedStats(prog, inv.gearStats()).lootFind });
     for (const g of loot.gear) { if (inv.addGear(g)) say(`${RARITY_RU[g.rarity]}: ${g.name} (ур. ${g.il})`, RARITY_COLOR[g.rarity], 3000); else say('Сумка полна', '#ff3a6a'); }
     for (const [id, n] of loot.items) if (ITEMS[id]?.cat === 'unique') { inv.add(id, n); say(`Уникальный: ${itemName(id)}`, RARITY_COLOR.legendary, 4000); }
+    inv.gold += loot.gold; if (loot.gold) say(`+${loot.gold} золота`, '#ffd23f');
+    for (const [id, n] of loot.items) if (ITEMS[id]?.cat !== 'unique') mobs.onLoot(id, n);
+    st.gold = inv.gold;
     if (m.id && m.def) { lastKill = m.lvl || 1; }
+    gainXp(xp, m.name || m.def?.name || m.id);
+    questProgress({ type: 'kill', mob: m.id }); if (BOSSES[m.id]) questProgress({ type: 'boss', boss: m.id });
   };
   let lastKill = 1;
   mobs.onLoot = (item, n) => {
@@ -140,11 +146,12 @@ export async function install(ow, opts = {}) {
   const seen = new Set(ow.discovered || []);
   function nearPoi(maxR = 0) { const p = ow.player.pos; let best = null, bd = 1e9; for (const q of POIS) { const d = Math.hypot(q.pos[0] - p.x, q.pos[1] - p.z); if (d < Math.max(maxR, q.r || 20) && d < bd) { bd = d; best = q; } } return best; }
   const stationsHere = () => { const q = nearPoi(); return [...(q?.stations || []), ...(Q.has('owstations') ? Object.keys(STATIONS) : [])]; };
-  const inHub = () => { const q = nearPoi(); return q?.id === SHOP.poi || Q.has('owstations'); };
+  const inHub = () => { if (ow.nearMarket) return ow.nearMarket(); const q = nearPoi(); return q?.id === SHOP.poi || Q.has('owstations'); };
 
   // ───── меню ─────
   let tab = null; const TABS = [['inv', 'Инвентарь [I]'], ['craft', 'Крафт'], ['shop', 'Магазин'], ['skills', 'Навыки [K]'], ['quests', 'Квесты [L]']];
   function openMenu(t) {
+    if (t === 'shop' && !inHub()) return false;
     tab = t; menu.classList.add('on'); try { document.exitPointerLock?.(); } catch {} ow.player.enabled = false; render();
   }
   function closeMenu() { tab = null; menu.classList.remove('on'); ow.player.enabled = true; try { if (!ow.player.touch && !ow.player.xr) ow.renderer.domElement.requestPointerLock?.(); } catch {} }
@@ -152,7 +159,7 @@ export async function install(ow, opts = {}) {
     return `<div class="card" style="--c:${RARITY_COLOR[g.rarity]}" data-uid="${g.uid}"><span class="t">${esc(g.name)}</span> <small>${SLOT_RU[g.slot] || g.slot} · ур. ${g.il} · ${RARITY_RU[g.rarity]}${g.effect ? ' · ' + esc(g.effect) : ''}</small>${g.affixes.map((a) => `<small>${esc(affixText(a))}</small>`).join('')}${extra}</div>`;
   }
   function render() {
-    const nav = `<nav>${TABS.map(([k, n]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}" ${k === 'shop' && !inHub() ? 'disabled title="Только в хабе"' : ''}>${n}</button>`).join('')}<span class="pts" style="align-self:center;margin-left:12px">Lv ${prog.level} · ${inv.gold} з.</span><button class="x" data-close>✕ Esc</button></nav>`;
+    const nav = `<nav>${TABS.map(([k, n]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}" ${k === 'shop' && !inHub() ? 'disabled title="Только в хабе"' : ''}>${n}</button>`).join('')}<span class="pts" style="align-self:center;margin-left:12px">Ур. ${prog.level} · ${inv.gold} з.</span><button class="x" data-close>✕ Esc</button></nav>`;
     let body = '';
     if (tab === 'inv') {
       const eq = GEAR_SLOTS.map((s) => { const g = inv.equipped[s] && inv.find(inv.equipped[s]); return `<div class="slot" style="border-color:${g ? RARITY_COLOR[g.rarity] : '#fff3'}"><b>${SLOT_RU[s]}</b><br>${g ? `<span style="color:${RARITY_COLOR[g.rarity]}">${esc(g.name)}</span> ур.${g.il}<br><button class="btn g" data-uneq="${s}">снять</button>` : '—'}</div>`; }).join('');
@@ -171,15 +178,15 @@ export async function install(ow, opts = {}) {
       const byA = {}; for (const s of Object.values(SKILLS)) (byA[s.archetype || 'common'] ||= []).push(s);
       const attrs = P.ATTR_KEYS.map((k) => `<div class="row"><span>${ATTRIBUTES[k].name} <small>${Object.entries(ATTRIBUTES[k].perPoint).map(([a, v]) => `${a} +${v}`).join(', ')}</small></span><span><b>${prog.attrs[k]}</b> <button class="btn" data-attr="${k}" ${prog.ap ? '' : 'disabled'}>+</button></span></div>`).join('');
       const cons = ['A', 'B'].map((br) => { const c = CONSTELLATIONS[prog.archetype]?.[br]; if (!c) return ''; return `<div><b>${esc(c.name)}</b>${c.nodes.map((n, i) => { const key = `${prog.archetype}.${br}.${i}`, own = prog.constellations.includes(key); return `<div class="row"><small>${esc(n)} (${CONSTELLATIONS.nodeCost[i]} ОТ)</small>${own ? '✔' : `<button class="btn g" data-cons="${key}" ${prog.tp ? '' : 'disabled'}>взять</button>`}</div>`; }).join('')}</div>`; }).join('');
-      body = `<div><h3>Древо навыков · <span class="pts">ОН ${prog.sp}</span></h3>${Object.entries(byA).map(([a, list]) => `<div style="margin:6px 0"><b style="color:#3ec5ff">${a}</b>${list.map((s) => { const r = prog.skills[s.id] || 0; return `<div class="row"><span>${esc(s.name)} <small>${s.type} · ранг ${r}/5${r >= 3 ? ` · талант ${prog.talents[s.id] || '—'} <button class="btn g" data-tal="${s.id}:A">A</button><button class="btn g" data-tal="${s.id}:B">B</button>` : ''}</small></span><button class="btn" data-rank="${s.id}">${r ? 'ранг +' : 'открыть'}</button></div>`; }).join('')}</div>`).join('')}</div>
+      body = `<div><h3>Древо навыков · <span class="pts">ОН ${prog.sp}</span></h3>${Object.entries(byA).map(([a, list]) => `<div style="margin:6px 0"><b style="color:#3ec5ff">${ARCH_RU[a] || a}</b>${list.map((s) => { const r = prog.skills[s.id] || 0; return `<div class="row"><span>${esc(s.name)} <small>${({ active: 'Активный', passive: 'Пассивный', ultimate: 'Ульта', traversal: 'Передвижение' })[s.type] || 'Навык'} · ранг ${r}/5${r >= 3 ? ` · талант ${prog.talents[s.id] || '—'} <button class="btn g" data-tal="${s.id}:A">A</button><button class="btn g" data-tal="${s.id}:B">B</button>` : ''}</small></span><button class="btn" data-rank="${s.id}">${r ? 'ранг +' : 'открыть'}</button></div>`; }).join('')}</div>`).join('')}</div>
         <div><h3>Характеристики · <span class="pts">ОХ ${prog.ap}</span></h3>${attrs}<h3 style="margin-top:10px">Созвездия · <span class="pts">ОТ ${prog.tp}</span></h3>${cons}</div>`;
     } else if (tab === 'quests') {
       const q = P.questText(qlog);
-      body = `<div><h3>Основная линия</h3><div class="card" style="--c:#ffd23f"><span class="t">${esc(q.title)}</span><small>шаг ${q.stepIdx + 1 || '-'}/${q.steps || '-'} · ${esc(q.step)}</small></div><h3>Выполнено</h3>${qlog.done.map((d) => `<small>✔ ${d} · ${esc(QUESTS[d]?.title || '')}</small><br>`).join('') || '<small>пока ничего</small>'}<h3 style="margin-top:10px">Статистика</h3><small>Убито мобов: ${kills} · время в мире: ${Math.round(playTime / 60)} мин · XP всего: ${prog.xpTotal}</small></div>
+      body = `<div><h3>Основная линия</h3><div class="card" style="--c:#ffd23f"><span class="t">${esc(q.title)}</span><small>шаг ${q.stepIdx + 1 || '-'}/${q.steps || '-'} · ${esc(q.step)}</small></div><h3>Выполнено</h3>${qlog.done.map((d) => `<small>✔ ${esc(QUESTS[d]?.title || '')}</small><br>`).join('') || '<small>пока ничего</small>'}<h3 style="margin-top:10px">Статистика</h3><small>Убито мобов: ${kills} · время в мире: ${Math.round(playTime / 60)} мин · XP всего: ${prog.xpTotal}</small></div>
         <div><h3>Сохранения (${store.kind})</h3>${['slot1', 'slot2', 'slot3'].map((s) => `<div class="row"><span>${s}</span><span><button class="btn" data-save="${s}">сохранить</button><button class="btn g" data-load="${s}">загрузить</button></span></div>`).join('')}<div class="row"><span>Перенос ПК ↔ Quest</span><span><button class="btn g" data-export>копировать</button><button class="btn g" data-import>вставить</button></span></div><small id="owm-saves"></small></div>`;
     }
     menu.innerHTML = nav + `<div class="body">${body}</div>`;
-    if (tab === 'quests') store.list().then((l) => { const e = menu.querySelector('#owm-saves'); if (e) e.textContent = l.map((x) => `${x.slot}: Lv ${x.level}, ${new Date(x.savedAt).toLocaleString()}`).join(' · '); });
+    if (tab === 'quests') store.list().then((l) => { const e = menu.querySelector('#owm-saves'); if (e) e.textContent = l.map((x) => `${x.slot}: Ур. ${x.level}, ${new Date(x.savedAt).toLocaleString()}`).join(' · '); });
   }
   let shopStock = null, shopDay = -1; function shopGear() { const day = Math.floor(playTime / 600); if (day !== shopDay) { shopDay = day; shopStock = [0, 1, 2].map(() => rollGear({ il: prog.level, rarity: rollRarity('tank') })); } return shopStock; }
   menu.addEventListener('click', (e) => {
@@ -188,27 +195,28 @@ export async function install(ow, opts = {}) {
     else if (D.eq) { const r = inv.equip(D.eq, prog.level); msg = r.ok ? 'Надето' : r.reason; applyStats(); }
     else if (D.uneq) { inv.unequip(D.uneq); applyStats(); }
     else if (D.salv) inv.salvage(D.salv);
-    else if (D.sell) msg = `+${inv.sell(D.sell)} з.`;
+    else if (D.sell && inHub()) msg = `+${inv.sell(D.sell)} з.`;
     else if (D.use) { if (inv.remove(D.use, 1)) { st.hp = Math.min(st.hpMax, st.hp + (ITEMS[D.use].heal || 0)); msg = 'Лечение'; } }
     else if (D.craft) { const r = inv.craft(D.craft, stationsHere()); msg = r.ok ? `Создано: ${itemName(r.out[0])}` : r.reason; if (r.ok) chime(getAudio(), 'item'); }
-    else if (D.buy) { const [id, p] = D.buy.split(':'); msg = inv.buy(id, +p) ? `Куплено: ${itemName(id)}` : 'Не хватает золота'; }
-    else if (D.buyg) { const g = shopStock.find((x) => x.uid === D.buyg), p = sellPrice(g) * SHOP.gearMarkup; if (inv.gold >= p && inv.addGear(g)) { inv.gold -= p; shopStock = shopStock.filter((x) => x !== g); msg = 'Куплено'; } }
+    else if (D.buy && inHub()) { const [id, p] = D.buy.split(':'); msg = inv.buy(id, +p) ? `Куплено: ${itemName(id)}` : 'Не хватает золота'; }
+    else if (D.buyg && inHub()) { const g = shopStock.find((x) => x.uid === D.buyg), p = sellPrice(g) * SHOP.gearMarkup; if (inv.gold >= p && inv.addGear(g)) { inv.gold -= p; shopStock = shopStock.filter((x) => x !== g); msg = 'Куплено'; } }
     else if (D.rank) { const r = P.rankUpSkill(prog, D.rank); msg = r.ok ? `${SKILLS[D.rank].name}: ранг ${r.rank}` : r.reason; }
     else if (D.tal) { const [id, ab] = D.tal.split(':'); P.pickTalent(prog, id, ab); }
     else if (D.attr) { P.spendAttr(prog, D.attr); applyStats(); }
     else if (D.cons) msg = P.buyConstellation(prog, D.cons) ? 'Узел взят' : 'Недоступно';
     else if (D.save) { store.save(D.save, snap()).then(() => say('Сохранено: ' + D.save, '#34e89e')).catch((er) => say(er.message, '#ff3a6a')); }
     else if (D.load) { store.load(D.load).then((s) => { if (!s) return say('Слот пуст', '#ff3a6a'); loadFrom(s); say('Загружено', '#34e89e'); render(); }); }
-    else if ('export' in D) { const b64 = exportB64(snap()); navigator.clipboard?.writeText(b64).then(() => say('Сохранение скопировано', '#34e89e'), () => prompt('Скопируйте:', b64)); }
+    else if ('export' in D) { const b64 = exportB64(snap()); (navigator.clipboard?.writeText(b64) || Promise.reject(new Error('clipboard'))).then(() => say('Сохранение скопировано', '#34e89e'), () => prompt('Скопируйте:', b64)); }
     else if ('import' in D) { const b64 = prompt('Вставьте сохранение (base64):'); if (b64) { try { loadFrom(importB64(b64)); say('Импортировано', '#34e89e'); } catch (er) { say('Ошибка: ' + er.message, '#ff3a6a'); } } }
     st.gold = inv.gold; if (msg) say(msg); render();
   });
-  function loadFrom(s) { prog = s.progression; inv = new Inventory(s.inventory); qlog = s.questLog || P.createQuestLog(); playTime = s.playTime || 0; if (s.player?.pos) ow.tp?.(s.player.pos[0], s.player.pos[2]); applyStats(); }
-  const KEYMAP = { KeyI: 'inv', KeyK: 'skills', KeyL: 'quests' };
+  function loadFrom(s) { prog = s.progression; inv = new Inventory(s.inventory); qlog = s.questLog || P.createQuestLog(); playTime = s.playTime || 0; kills = s.stats?.kills || 0; ow.discovered.clear(); for (const id of s.world?.discovered || []) ow.discovered.add(id); seen.clear(); for (const id of ow.discovered) seen.add(id); if (s.player?.pos) ow.tp?.(s.player.pos[0], s.player.pos[2]); if (Number.isFinite(s.world?.time)) ow.setTime?.(s.world.time); applyStats(); if (Number.isFinite(s.player?.hp)) st.hp = Math.max(1, Math.min(st.hpMax, s.player.hp)); }
+  const KEYMAP = { Tab: 'inv', KeyI: 'inv', KeyK: 'skills', KeyL: 'quests' };
   const onKey = (e) => {
     if (e.repeat || e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return; window.__owmKey = e.code + ':' + tab;
-    const t = KEYMAP[e.code]; if (t) { e.preventDefault(); if (tab === t) closeMenu(); else openMenu(t); }
-    else if (e.code === 'Escape' && tab) closeMenu();
+    if (e.code === 'KeyF' && inHub()) { e.preventDefault(); e.stopImmediatePropagation(); questProgress({ type: 'talk', npc: SHOP.npc }); if (ow.player.xr) api.toggleShop?.(); else openMenu('shop'); return; }
+    const t = KEYMAP[e.code]; if (t) { e.preventDefault(); e.stopImmediatePropagation(); if (tab === t) closeMenu(); else openMenu(t); }
+    else if (e.code === 'Escape' && tab) { e.preventDefault(); e.stopImmediatePropagation(); closeMenu(); }
   };
   addEventListener('keydown', onKey, true);
 
@@ -220,23 +228,29 @@ export async function install(ow, opts = {}) {
 
   // ───── тик: свой таймер (работает и в XR, не трогает цикл main.js) ─────
   let lastT = performance.now(), poiT = 0, lastHitSeen = st.lastHit;
-  function tick() {
-    const now = performance.now(), dt = Math.min(0.25, (now - lastT) / 1000); lastT = now; playTime += dt;
+  function tick(forcedDt) {
+    const now = performance.now(), dt = forcedDt ?? Math.min(0.25, (now - lastT) / 1000); lastT = now; playTime += dt;
     for (let i = vfx.length - 1; i >= 0; i--) if (!vfx[i](dt)) vfx.splice(i, 1);
     if ((poiT -= dt) <= 0) { poiT = 0.5; for (const id of ow.discovered || []) if (!seen.has(id)) { seen.add(id); const r = P.onPoiDiscovered(prog, id); say(`Открытие: +${r.xp} XP${r.sp ? ' · +1 ОН' : ''}${r.tp ? ' · +1 ОТ' : ''}`, '#7c5cff'); onLevelUps(r.ups); questProgress({ type: 'goto', poi: id });
       const pq = POIS.find((p) => p.id === id); if (pq?.type === 'hub' || pq?.stations?.includes('stn_campfire')) autosaver.trigger('hub'); } }
-    const near = nearPoi(); if (near && QUESTS_STEP(qlog)?.poi === near.id) questProgress({ type: 'goto', poi: near.id });
+    const near = nearPoi(); if (near) { questProgress({ type: 'goto', poi: near.id }); questProgress({ type: 'interact', poi: near.id });
+      const step = QUESTS_STEP(qlog); if (step?.type === 'talk' && near.npcs?.includes(step.npc)) questProgress({ type: 'talk', npc: step.npc }); }
+    const step = QUESTS_STEP(qlog); if (step?.type === 'collect') questProgress({ type: 'collect', item: step.item, have: inv.count(step.item) });
+    if (tab === 'shop' && !inHub()) closeMenu();
     const inCombat = st.lastHit !== lastHitSeen; lastHitSeen = st.lastHit; autosaver.tick(dt, { inCombat });
     // HUD
     const hpK = st.hpMax ? st.hp / st.hpMax : 0; const hp = $('.hp'); hp.className = 'hp' + (hpK < 0.25 ? ' low' : hpK < 0.5 ? ' mid' : '');
-    $('.hp i').style.width = `${Math.max(0, hpK * 100)}%`; $('.hpt').textContent = `${Math.ceil(st.hp)}/${st.hpMax}`; $('.lv').textContent = `Lv ${prog.level}`;
-    $('.xp i').style.width = `${prog.level >= 30 ? 100 : (prog.xp / P.xpToNext(prog.level)) * 100}%`; $('.gold').textContent = `◈ ${inv.gold}  ·  ОН ${prog.sp}  ОХ ${prog.ap}  ОТ ${prog.tp}`;
+    $('.hp i').style.width = `${Math.max(0, hpK * 100)}%`; $('.hpt').textContent = `${Math.ceil(st.hp)}/${st.hpMax}`; $('.lv').textContent = `Ур. ${prog.level}`;
+    $('.xp i').style.width = `${prog.level >= 30 ? 100 : (prog.xp / P.xpToNext(prog.level)) * 100}%`; $('.gold').textContent = `◈ ${inv.gold}  ·  ОН ${prog.sp}  ОХ ${prog.ap}  ОТ ${prog.tp}${inHub() ? ' · F — торговец' : ''}`;
     const q = P.questText(qlog); qt.innerHTML = `<b>${esc(q.title)}</b>${esc(q.step)}`;
   }
-  const iv = setInterval(tick, 100);
-  applyStats(); tick();
-  const api = { get prog() { return prog; }, get inv() { return inv; }, get quests() { return qlog; }, store, openMenu, closeMenu, gainXp, snap, save: (s = 'slot1') => store.save(s, snap()), load: (s) => store.load(s).then((x) => x && loadFrom(x)),
-    dispose() { clearInterval(iv); removeEventListener('keydown', onKey, true); mobs.onKill = origKill; [hud, qt, lvl, toast, menu, style].forEach((e) => e.remove()); } };
+  const iv = opts.externalTick ? null : setInterval(tick, 100);
+  applyStats(); if (loaded) loadFrom(loaded); tick(0);
+  const api = { get prog() { return prog; }, get inv() { return inv; }, get quests() { return qlog; }, store, openMenu, closeMenu, gainXp, snap, tick, questProgress, inHub, get menuOpen() { return !!tab; },
+    buy(id) { const offer = SHOP.stock.find(x => x[0] === id); if (!inHub() || !offer || inv.count(id) >= (ITEMS[id]?.stack ?? 99)) return false; const ok = inv.buy(id, offer[1]); st.gold = inv.gold; if (ok) { say(`Куплено: ${itemName(id)}`); questProgress({ type: 'collect', item: id, have: inv.count(id) }); } return ok; },
+    sell(uid) { if (!inHub()) return 0; const n = inv.sell(uid); st.gold = inv.gold; return n; },
+    autosave: () => autosaver.trigger('manual'), save: (s = 'slot1') => store.save(s, snap()), load: (s) => store.load(s).then((x) => x && loadFrom(x)),
+    dispose() { clearInterval(iv); removeEventListener('keydown', onKey, true); mobs.onKill = origKill; mobs.onLoot = origLoot; ow.player.enabled = true; delete ow.__progression; if (window.__OW_PROG === api) delete window.__OW_PROG; [hud, qt, lvl, toast, menu, style].forEach((e) => e.remove()); } };
   ow.__progression = api; window.__OW_PROG = api; console.info(`[progression] installed store=${store.kind} L${prog.level}`);
   return api;
 }

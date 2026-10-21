@@ -5,6 +5,9 @@ import { POINTS, ATTRIBUTES, CONSTELLATIONS } from '../../shared/defs/progressio
 import { SKILLS, RANK_LEVEL_REQ, RANK_COST_SP } from '../../shared/defs/skills.js';
 import { MOBS, BOSSES } from '../../shared/defs/enemies.js';
 import { QUESTS } from '../../shared/defs/quests.js';
+import { ITEMS } from '../../shared/defs/items.js';
+import { NPCS } from '../../shared/defs/pois.js';
+import { KZ_POIS, KZ_BOSSES } from '../../shared/defs/theme_kz.js';
 
 export const MAX_LEVEL = LEVEL_CURVE.maxLevel;
 export const ATTR_KEYS = Object.freeze(['vit', 'agi', 'wil', 'pre']);
@@ -89,7 +92,7 @@ export function questEvent(log, ev) {
   let hit = false;
   if (st.type === 'kill' && ev.type === 'kill' && ev.mob === st.mob) { log.counters.n = (log.counters.n || 0) + 1; hit = log.counters.n >= (st.n || 1); }
   else if ((st.type === 'goto' || st.type === 'interact' || st.type === 'puzzle' || st.type === 'photo') && (ev.type === 'goto' || ev.type === 'interact') && ev.poi === st.poi) hit = true;
-  else if (st.type === 'collect' && ev.type === 'collect' && ev.item === st.item) hit = (ev.have || 0) >= (st.n || 1);
+  else if (st.type === 'collect' && ev.type === 'collect' && ev.item === st.item) { log.counters.n = ev.have || 0; hit = log.counters.n >= (st.n || 1); }
   else if (st.type === 'talk' && ev.type === 'talk' && ev.npc === st.npc) hit = true;
   else if (st.type === 'boss' && (ev.type === 'boss' || ev.type === 'kill') && (ev.boss || ev.mob) === st.boss) hit = true;
   else if (st.type === 'escort' && ev.type === 'goto' && ev.poi === st.poi) hit = true;
@@ -102,7 +105,9 @@ export function questText(log) {
   const q = QUESTS[log.active]; if (!q) return { title: 'Основная линия пройдена', step: '' };
   const s = q.steps[log.step] || {}; const n = s.n ? ` (${log.counters.n || 0}/${s.n})` : '';
   const verb = { goto: 'Дойти до', interact: 'Активировать', kill: 'Победить', collect: 'Собрать', talk: 'Поговорить:', boss: 'Босс:', puzzle: 'Решить загадку:', photo: 'Сфотографировать', escort: 'Сопроводить до' }[s.type] || s.type;
-  return { id: log.active, title: q.title, level: q.level, step: `${verb} ${(s.poi || s.mob || s.item || s.npc || s.boss || '').replace(/^(poi_|m_|it_|npc_|boss_)/, '')}${n}`, stepIdx: log.step, steps: q.steps.length };
+  const id = s.boss || s.mob || s.item || s.npc || s.poi || '';
+  const label = KZ_POIS[id]?.nameRu || KZ_POIS[id]?.nameKk || KZ_BOSSES[id]?.nameKk || MOBS[id]?.name || ITEMS[id]?.name || NPCS[id]?.name || BOSSES[id]?.name || id;
+  return { id: log.active, title: q.title, level: q.level, step: `${verb} ${label}${n}`, stepIdx: log.step, steps: q.steps.length };
 }
 /** Награда квеста → прогрессия. Возвращает {xp, ups, items, skills}. */
 export function applyQuestReward(p, qid) {

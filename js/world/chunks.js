@@ -29,19 +29,19 @@ function makeTopology(m) {
   return { m, perim: Int32Array.from(perim), verts, index: Uint32Array.from(idx) };
 }
 
-export function createTerrainChunks({ terrain, rings, material }) {
+export function createTerrainChunks({ terrain, rings, material, strides = STRIDES }) {
   const { n, step, heights, colors } = terrain;
   const cells = CHUNK_M / step;            // 32 клетки на чанк
   const count = Math.round((n - 1) / cells); // 24 × 24 чанка
   const lin = new Float32Array(256);       // sRGB → линейный цвет
   for (let i = 0; i < 256; i++) { const c = i / 255; lin[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
-  const topo = STRIDES.map((s) => makeTopology(cells / s + 1));
+  const topo = strides.map((s) => makeTopology(cells / s + 1));
   const group = new THREE.Group();
   group.name = 'terrain';
 
   // заполнить вершины чанка (cx, cz) уровня lod в массивы с вершины v0; вернуть [minY, maxY]
   function fill(cx, cz, lod, pos, nor, col, v0) {
-    const s = STRIDES[lod], T = topo[lod], m = T.m, skirt = step * s * 2 + 1;
+    const s = strides[lod], T = topo[lod], m = T.m, skirt = step * s * 2 + 1;
     const gx0 = cx * cells, gz0 = cz * cells;
     let minY = Infinity, maxY = -Infinity;
     for (let j = 0; j < m; j++) {

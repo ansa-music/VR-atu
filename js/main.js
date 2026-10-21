@@ -127,6 +127,7 @@ const logo = safeCall(logoMod.createAtuLogo, scene);
 const soloEnvironment = scene.children.filter(obj => !envBefore.has(obj) && !obj.isLight);
 // открытый мир (?mode=world): тир, рубеж и его свет скрыты; не загрузился — остаётся тир
 let world = null;
+let progressionBridge = null, progressionVr = null;
 if (WORLD_MODE) {
   try {
     const worldMod = await import('./world/index.js' + new URL(import.meta.url).search); // версия как у main.js — без старого кэша
@@ -543,6 +544,7 @@ const staticColliders = [...(env.colliders || []), ...(range?.colliders || []), 
 const hittables = [];
 
 function shootables() {
+  if (progressionVr?.mesh.visible) return progressionVr.targets;
   if (sharedArena.active) return [];
   if (state === 'play') return targets.children;
   if (state === 'countdown') return [];
@@ -960,6 +962,7 @@ addEventListener('wheel', (e) => {
 
 let jumpRequested = false;
 addEventListener('keydown', (e) => {
+  if (progressionBridge && !progressionBridge.player.enabled) return;
   keys.add(e.code);
   if (e.repeat) return;
   if (e.code === 'Space' && !renderer.xr.isPresenting) { e.preventDefault(); jumpRequested = true; }
@@ -1039,6 +1042,8 @@ const controllers = [0, 1].map((i) => {
     c.userData.hand = safeCall(charMod.createHand, { side, color });
     if (c.userData.hand?.group) c.add(c.userData.hand.group);
     tintCharacter(c.userData.hand, skinId(window.vrAtuSelectedSkin));
+    // Низкий пресет мира: убираем отдельные декоративные слои перчаток (−8 стереовызовов).
+    if (world && quality.id === 'low') c.userData.hand?.group.traverse(o => { if (o.name === 'glove-graph' || o.name === 'glove-glow') o.visible = false; });
     if (c.userData.wrist) { c.remove(c.userData.wrist.group); c.userData.wrist = null; }
     if (side === 'left') {
       c.userData.wrist = safeCall(charMod.createWristHud);
@@ -1052,12 +1057,14 @@ const controllers = [0, 1].map((i) => {
     if (weaponHand === c) weaponHand = controllers.find((k) => k !== c && k.userData.src) || null;
   });
   c.addEventListener('selectstart', () => {
+    if (progressionVr?.select(c)) { c.userData.progressionTrig = true; return; }
     // фэнтези: курок свободной руки рисует руну, у руки с оружием — ульта
     const bowString = combatOn && c !== weaponHand && arsenal.current.def.action === 'bow'; // курок свободной руки — тетива
     if (fantasy && !bowString && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
     c.userData.trigHeld = true; c.userData.trigFirst = true;
   });
   c.addEventListener('selectend', () => {
+    if (c.userData.progressionTrig) { c.userData.progressionTrig = false; return; }
     c.userData.trigHeld = false;
     if (c.userData.skillTrig) { c.userData.skillTrig = false; skills?.onTrigger?.(c, false); }
     else if (c === weaponHand) c.userData.trigReleased = true; // заряженный выстрел жезла
@@ -1203,8 +1210,9 @@ function updateControllers() {
   const laserOn = state !== 'play' || arsenal.current.def.bolt || sharedArena.active;
   for (const c of controllers) {
     const { laser, dot } = c.userData;
-    laser.visible = laserOn;
-    if (!renderer.xr.isPresenting || !c.visible || !laserOn) { dot.visible = false; continue; }
+    const showLaser = laserOn && (!world || c !== weaponHand);
+    laser.visible = showLaser;
+    if (!renderer.xr.isPresenting || !c.visible || !showLaser) { dot.visible = false; continue; }
     setRayFromController(c);
     raycaster.far = Infinity;
     const hit = raycaster.intersectObjects(shootables(), false)[0];
@@ -1243,6 +1251,7 @@ function pollVrButtons() {
 
 // курки и кнопка МК
 function handleTriggers() {
+  if (progressionBridge && !progressionBridge.player.enabled) { pcTrigger.held = pcTrigger.first = false; return; }
   if (renderer.xr.isPresenting) {
     for (const c of controllers) {
       const u = c.userData;
@@ -1300,6 +1309,7 @@ function isCrouched() {
 
 let turnRate = 0; // скорость искусственного поворота, рад/с (для виньетки)
 function updateMovement(dt) {
+  if (progressionBridge && !progressionBridge.player.enabled) { keys.clear(); return; }
   const xr = renderer.xr.isPresenting;
   move.set(0, 0);
   turnRate = 0;
@@ -1374,6 +1384,7 @@ function updateMovement(dt) {
 
   // скорость: бег / шаг / присед, тяжёлое оружие и прицеливание замедляют
   let speed = sprinting ? MOVE.sprint : crouched ? MOVE.crouch : MOVE.walk;
+  if (progressionBridge) speed *= 1 + (progressionBridge.state.derived?.moveSpeed || 0);
   speed *= w.def.speedMul * (1 - (1 - MOVE.ads) * aimAmt);
   const tx = (fwd.x * move.y + right.x * move.x) * speed;
   const tz = (fwd.z * move.y + right.z * move.x) * speed;
@@ -2106,6 +2117,7 @@ function scoreEnemy(r, point, controller) {
   if (!r || !scoring()) return;
   if (r.blocked) { fx.burst(point, 0x9a9aa8, 5); playSpell('barrier-hit', { volume: 0.5 }); return; }
   if (!r.killed) { fx.burst(point, 0xffffff, 4); playSpell('enemy-hit'); vibrate(controller, 0.4, 30); return; }
+  progressionBridge?.killed(r.enemy);
   addScore(r.points, point, controller, r.type, r.weakPoint);
 }
 // урон навыками по противникам
@@ -2151,12 +2163,13 @@ function onEnemyEvent(e) {
     case 'player-hit': {
       const hp = world ? worldDamage(e.damage ?? 1) : director.damagePlayer(e.damage ?? 1);
       for (const c of controllers) vibrate(c, 1, 120);
-      notify(`♥ ${Math.ceil(hp)} / ${world ? WORLD_MAX_HP : director.maxHp}`, '#ff5a6e');
+      notify(`♥ ${Math.ceil(hp)} / ${world ? worldMaxHp() : director.maxHp}`, '#ff5a6e');
       playSpell('enemy-hit');
       combo = 0; lastMult = 1;
       break;
     }
     case 'killed': case 'projectile-hit':
+      if (e.type === 'killed' || e.killed) progressionBridge?.killed(e.enemy);
       if (e.points && (e.killed ?? true)) addScore(e.points, e.position || headPos, weaponHand, e.enemy?.type);
       break;
     case 'burst': if (e.position) fx.burst(e.position, e.color ?? 0xffa040, 12); break;
@@ -2225,42 +2238,48 @@ function updateCombat(dt, wdt) {
 }
 
 // ---------- открытый мир: существа по биомам, здоровье игрока, вспышки попаданий ----------
-const WORLD_MAX_HP = 10;
+function worldMaxHp() { return progressionBridge?.state.hpMax || 150; }
 const WORLD_SPAWNS = {
   b_meadow: ['wisp', 'wisp', 'fairy'], b_forest: ['wisp', 'fairy', 'guardian'], b_swamp: ['skull', 'wisp', 'eye'],
   b_mountains: ['guardian', 'eye', 'wisp'], b_desert_ruins: ['eye', 'guardian', 'skull'], b_volcano: ['eye', 'skull', 'guardian'],
 };
 const WORLD_CAP = { wisp: 4, fairy: 1, skull: 2, guardian: 1, eye: 2 };
 const WORLD_CRATER = { x: 1390, z: 320 }; // кальдера: здесь живёт колосс
-let worldHp = WORLD_MAX_HP, worldHurtT = 0, worldSpawnT = 3, worldBossCd = 0;
+let worldHp = 150, worldHurtT = 0, worldSpawnT = 3, worldBossCd = 0;
 function updateWorldCreatures(dt) {
   if (!world || !combatOn || !enemies || SPECTATE) return;
+  if (progressionBridge) worldHp = progressionBridge.state.hp;
   worldHurtT -= dt;
-  if (worldHurtT <= 0 && worldHp < WORLD_MAX_HP) worldHp = Math.min(WORLD_MAX_HP, worldHp + dt * 0.5);
+  if (worldHurtT <= 0 && worldHp < worldMaxHp()) worldHp = Math.min(worldMaxHp(), worldHp + dt * 0.5);
+  if (progressionBridge) progressionBridge.state.hp = worldHp;
   worldBossCd -= dt;
   if ((worldSpawnT -= dt) > 0) return;
   worldSpawnT = 2.5 + Math.random() * 2.5;
   // колосс — у кальдеры вулкана, раз в 3 минуты
-  if (world.biome === 'b_volcano' && worldBossCd <= 0 && Math.hypot(headPos.x - WORLD_CRATER.x, headPos.z - WORLD_CRATER.z) < 160 && enemies.spawn('boss')) {
+  const bossBiome = progressionBridge?.bossBiome() || (world.biome === 'b_volcano' && Math.hypot(headPos.x - WORLD_CRATER.x, headPos.z - WORLD_CRATER.z) < 160 ? 'b_volcano' : null);
+  if (bossBiome && worldBossCd <= 0 && spawnWorldCreature('boss', bossBiome)) {
     worldBossCd = 180;
-    notify('КАМЕННЫЙ КОЛОСС ПРОБУДИЛСЯ!', '#ff7a2a');
+    notify(progressionBridge.bossTitle(bossBiome) + ' — босс пробудился!', '#ff7a2a');
     playSpell('boss-roar');
     return;
   }
   const list = WORLD_SPAWNS[world.biome] || WORLD_SPAWNS.b_meadow;
   const type = list[Math.floor(Math.random() * list.length)];
-  if (enemies.count < 8 && enemies.countOf(type) < WORLD_CAP[type]) enemies.spawn(type);
+  if (enemies.count < 8 && enemies.countOf(type) < WORLD_CAP[type]) spawnWorldCreature(type);
 }
+function spawnWorldCreature(type, biome = world.biome) { return progressionBridge?.bindEnemy(enemies.spawn(type), biome) || null; }
 // урон игроку; при нуле — возвращение в Рассветный Брод
 function worldDamage(dmg) {
+  if (progressionBridge) { worldHp = progressionBridge.state.hp; progressionBridge.state.lastHit++; }
   worldHp -= dmg;
   worldHurtT = 4;
   if (worldHp <= 0) {
-    worldHp = WORLD_MAX_HP;
+    worldHp = worldMaxHp();
     enemies.clear();
     moveHeadTo(new THREE.Vector3(world.spawn.x, world.spawn.y, world.spawn.z));
     notify('Вы пали — возвращение в Рассветный Брод', '#ff5a7a');
   }
+  if (progressionBridge) progressionBridge.state.hp = worldHp;
   return worldHp;
 }
 // вспышка попадания по стихии заклинания (формат DAMAGE_TYPE_VFX)
@@ -2514,12 +2533,18 @@ if (world) {
   // название места по-казахски, ниже — по-русски
   world.onTitle = (t) => notify(t.kk + (t.ru && t.ru !== t.kk ? ' · ' + t.ru : ''), '#ffd23f');
   syncGunVisibility();
+  camera.getWorldPosition(headPos);
+  const bridgeMod = await import('./world/progression-bridge.js' + new URL(import.meta.url).search);
+  progressionBridge = await bridgeMod.createProgressionBridge({ world, headPos, scene, renderer, notify, moveTo: (x, y, z) => moveHeadTo(new THREE.Vector3(x, y, z)) });
+  const vrMod = await import('./world/progression-vr.js' + new URL(import.meta.url).search);
+  progressionVr = vrMod.createProgressionVr({ bridge: progressionBridge, camera, renderer });
+  worldHp = progressionBridge.state.hp;
 }
 
 // ---------- игровой цикл ----------
 const clock = new THREE.Clock();
 // кадр игры; forcedDt — шаг для отладки (vrTirDebug.tick), когда скрытая вкладка не даёт кадров
-function frame(_time, _xrFrame, forcedDt) {
+function frame(_time, _xrFrame, forcedDt, skipRender = false) {
   const raw = forcedDt ?? clock.getDelta();
   const dt = Math.min(raw, 0.05);
   const time = clock.elapsedTime;
@@ -2575,6 +2600,8 @@ function frame(_time, _xrFrame, forcedDt) {
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
   updateCombat(dt, wdt);
   world?.update(dt, headPos, renderer);
+  progressionBridge?.update(dt);
+  progressionVr?.update(dt);
   updateWorldCreatures(dt);
   if (world) world.combat = Math.min(1, (enemies?.count || 0) / 4);
 
@@ -2631,8 +2658,8 @@ function frame(_time, _xrFrame, forcedDt) {
   }
   if (SPECTATE) updateSpectator(dt);
   else castState(dt);
-  renderer.render(scene, camera);
-  if (xr) vrMirror.render(scene, camera, dt);
+  if (!skipRender) renderer.render(scene, camera);
+  if (xr && !skipRender) vrMirror.render(scene, camera, dt);
   if (!ready) { ready = true; emit('game:ready'); }
 }
 renderer.setAnimationLoop(frame);
@@ -2664,7 +2691,8 @@ function updateCharacter(dt) {
     const u = c.userData;
     if (!c.visible) continue;
     u.hand?.update?.(dt);
-    if (!fantasy) u.wrist?.update?.(wristInfo);
+    if (u.wrist?.group && world) u.wrist.group.visible = false;
+    if (!fantasy && !world) u.wrist?.update?.(wristInfo);
   }
   updateBracer();
   if (shadowBlob) shadowBlob.position.set(headPos.x, (world ? groundY : 0) + 0.012, headPos.z);
@@ -2687,7 +2715,15 @@ if (/[?&]debug\b/.test(location.search)) {
     get spectator() { return { code: SPECTATE, status: spectator.status, foes: specFoes.count, hands: specHands.filter((g) => g.visible).length, sendCode: castSender?.code, viewers: castSender?.viewers }; },
     get mirror() { return { enabled: vrMirror.enabled, frames: vrMirror.frames }; },
     get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },
-    spawn(type) { return !!enemies?.spawn(type); },
+    spawn(type) { return !!(world ? spawnWorldCreature(type) : enemies?.spawn(type)); },
+    get progression() { return progressionBridge?.debug || null; },
+    giveXp(n) { if (Number.isFinite(n) && n > 0) progressionBridge?.api.gainXp(n, "Отладка"); return this.progression; },
+    get progressionVr() { return progressionVr?.debug || null; },
+    damageNearest(damage = 1) {
+      if (!world || !Number.isFinite(damage) || damage <= 0) return 0;
+      let nearest = null, d = Infinity; for (const e of enemies.active) if (e.alive && e.center.distanceToSquared(headPos) < d) { nearest = e; d = e.center.distanceToSquared(headPos); }
+      return nearest ? enemyExplode(nearest.center, 0.5, damage, "rune") : 0;
+    },
     aimNearest() {
       const e = (enemies?.active || []).filter((x) => x.alive).sort((a, b) => a.center.distanceTo(headPos) - b.center.distanceTo(headPos))[0];
       if (!e) return null;
@@ -2700,7 +2736,7 @@ if (/[?&]debug\b/.test(location.search)) {
     get skills() { return skills; },
     get combat() { return { on: combatOn, mode: director?.mode, running: director?.running, enemies: enemies?.count, hp: director?.hp, weapon: arsenal.current.def.id, mana: arsenal.current.mana, wave: director?.wave }; },
     startRound() { if (state === 'menu' || state === 'over') startGame(); },
-    tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) frame(0, null, dt); return this.world || this.state; },
+    tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) frame(0, null, dt, i < n - 1); return this.world || this.state; },
     get holsters() { return holsters; },
     get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },
