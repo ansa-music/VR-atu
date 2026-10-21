@@ -127,7 +127,8 @@ if (WORLD_MODE) {
     const worldMod = await import('./world/index.js');
     const coarse = !!globalThis.matchMedia?.('(pointer: coarse)').matches;
     const presetId = worldMod.worldPresetId(quality, { coarse, override: urlParams.get('wq') });
-    world = await worldMod.createWorld({ scene, camera, quality, presetId });
+    const timeOverride = urlParams.has('time') ? Number(urlParams.get('time')) : null;
+    world = await worldMod.createWorld({ scene, camera, quality, presetId, timeOverride });
     for (const obj of soloEnvironment) obj.visible = false;
     for (const obj of scene.children) if (obj.isLight) obj.visible = false;
   } catch (e) {
@@ -1388,6 +1389,7 @@ function updateMovement(dt) {
       feet = 0; vy = 0; onGround = true;
       landDip = Math.min(0.12, impact * 0.022);
       sound('land', Math.min(1, impact / 5));
+      if (world && impact > 2) world.particles.spawn(LAND_DUST, tmpV.set(headPos.x, groundY + 0.05, headPos.z), null, Math.min(2, impact / 4));
       arsenal.current.bloom = Math.min(arsenal.current.def.spread.bloomMax + 0.5, arsenal.current.bloom + 0.4);
     }
   }
@@ -1413,6 +1415,8 @@ function updateMovement(dt) {
   }
 }
 
+// пыль при приземлении в открытом мире (формат эмиттера DAMAGE_TYPE_VFX)
+const LAND_DUST = { blend: 'alpha', count: 10, speed: [0.6, 1.6], spread: 85, life: [0.4, 0.8], size: [0.12, 0.45], gravity: -0.3, color: '#d9c7a3' };
 // открытый мир: шаг по рельефу под головой. Склон круче 45° и глубокая вода — стена
 // (скольжение вдоль неё по одной оси), с обрыва — падение, на уступ до 0,4 м — шаг вверх.
 const WORLD_SLOPE = Math.tan(THREE.MathUtils.degToRad(45));
@@ -2291,7 +2295,7 @@ function frame(_time, _xrFrame, forcedDt) {
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
   updateCombat(dt, wdt);
-  world?.update(dt, headPos);
+  world?.update(dt, headPos, renderer);
 
   // полёт пуль
   collectHittables();
@@ -2394,6 +2398,8 @@ if (/[?&]debug\b/.test(location.search)) {
     setMode(m) { setMode(m); },
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
+    setTime(h, mul) { world?.setTime(h, mul); },
+    burst(type = 'fire') { import('../shared/defs/damage-vfx.js').then(m => world?.particles.burst(m.DAMAGE_TYPE_VFX[type].hit, headPos.clone().add(new THREE.Vector3(0, -0.3, -2)), null)); },
     move(keyCode, ms = 500) { keys.add(keyCode); setTimeout(() => keys.delete(keyCode), ms); },
     get skills() { return skills; },
     get combat() { return { on: combatOn, mode: director?.mode, running: director?.running, enemies: enemies?.count, hp: director?.hp, weapon: arsenal.current.def.id, mana: arsenal.current.mana, wave: director?.wave }; },

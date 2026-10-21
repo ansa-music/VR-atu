@@ -113,7 +113,8 @@ export const THEME = {
     },
   },
   dayNight: {
-    dayLengthMin: 40, // канон: WORLD_CONFIG.dayLengthMin (24 мин день + 12 ночь + 2+2 сумерки) nightMinAmbient: 0.35, moon: { color: '#bcd4ff', intensity: 0.4 },
+    dayLengthMin: 40, // канон: WORLD_CONFIG.dayLengthMin (24 мин день + 12 ночь + 2+2 сумерки)
+    nightMinAmbient: 0.35, moon: { color: '#bcd4ff', intensity: 0.4 },
     keys: [ // час → доля «дня» и тёплый сдвиг горизонта
       { h: 0, day: 0, warm: 0 }, { h: 5, day: 0, warm: 0 }, { h: 6, day: 0.5, warm: 0.6 },
       { h: 7, day: 1, warm: 0.2 }, { h: 17, day: 1, warm: 0.1 }, { h: 19, day: 0.5, warm: 0.6 },

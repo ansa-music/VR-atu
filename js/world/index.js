@@ -1,10 +1,14 @@
 // js/world/index.js — режим «Открытый мир» (?mode=world), фаза 1: рельеф, чанки, море, небо и туман.
 // createWorld(...) → { heightAt, biomeAt, borderPush, update(dt, headPos), spawn, ... }
 import * as THREE from 'three';
-import { WORLD_CONFIG, BIOMES } from './config.js';
+import { WORLD_CONFIG } from './config.js';
 import { generateTerrain, createTerrainSampler, BIOME_IDS } from './heightmap.js';
 import { createTerrainChunks } from './chunks.js';
-import { makeGradientMap } from '../render/toon.js';
+import { makeGradientMap, SHARED } from '../render/toon.js';
+import { createSky } from './sky.js';
+import { createWater } from './water.js';
+import { createGrass } from './grass.js';
+import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
 
 /** Пресет мира по уровню качества игры: Quest → quest, телефон → phone, ПК → pc_low / pc_high. */
 export function worldPresetId(quality, { coarse = false, override = null } = {}) {
@@ -36,27 +40,7 @@ async function loadTerrain(seed) {
   }
 }
 
-// небо: градиент от горизонта (цвет тумана) к зениту, проходит тон-маппинг как и всё остальное
-function makeSky(radius) {
-  const mat = new THREE.ShaderMaterial({
-    uniforms: { uTop: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() } },
-    vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `uniform vec3 uTop; uniform vec3 uHorizon; varying vec3 vDir;
-      void main() {
-        gl_FragColor = vec4(mix(uHorizon, uTop, smoothstep(0.0, 0.45, vDir.y)), 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 12), mat);
-  mesh.frustumCulled = false;
-  mesh.renderOrder = -1000;
-  mesh.name = 'sky';
-  return mesh;
-}
-
-export async function createWorld({ scene, camera, quality, presetId = worldPresetId(quality) }) {
+export async function createWorld({ scene, camera, quality, presetId = worldPresetId(quality), timeOverride = null }) {
   const preset = WORLD_CONFIG.quality[presetId] || WORLD_CONFIG.quality.quest;
   const terrain = await loadTerrain(WORLD_CONFIG.seed);
   const sampler = createTerrainSampler(terrain);
@@ -69,52 +53,45 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
   const chunks = createTerrainChunks({ terrain, rings: preset.lodRings, material: groundMat });
   group.add(chunks.group);
 
-  // море: одна плоскость вокруг игрока до границы тумана
-  const seaSize = preset.fogFar * 2 + 256;
-  const sea = new THREE.Mesh(
-    new THREE.PlaneGeometry(seaSize, seaSize).rotateX(-Math.PI / 2),
-    new THREE.MeshToonMaterial({ color: BIOMES.b_meadow.palette.water, gradientMap: gradient }),
-  );
-  sea.position.y = seaLevel;
-  sea.name = 'sea';
-  group.add(sea);
+  // небо и сутки, свет (раздел 1.2.5)
+  const sky = createSky({ radius: preset.fogFar * 0.9, quality: presetId });
+  group.add(sky.group, ...sky.lights);
+  if (Number.isFinite(timeOverride)) sky.setTime(timeOverride);
 
-  // свет: небо + солнце (день; смена суток — фаза 2)
-  const hemi = new THREE.HemisphereLight(0xd8f0ff, 0x56603e, 1.15);
-  const sun = new THREE.DirectionalLight(0xfff1dc, 2.1);
-  sun.position.set(45, 80, 35);
-  group.add(hemi, sun);
+  // вода: море, болото, лава
+  const water = createWater({ terrain, preset: presetId, sunDir: sky.sunDir });
+  group.add(water.group);
 
-  const sky = makeSky(preset.fogFar * 0.9);
-  group.add(sky);
+  // трава вокруг игрока
+  SHARED.uRimPower.value = 0; // без каёмки: на тонких лезвиях она даёт белые кончики
+  const grass = createGrass({ terrain, sampler, preset: presetId, max: preset.grassMaxInstances, biomeIds: BIOME_IDS });
+  group.add(grass.mesh);
+
+  // частицы: вспышки (2 вызова) и атмосфера по биому и времени суток (1 вызов)
+  const particles = createBurstParticles({ capacity: presetId === 'pc_high' ? 2048 : 768 });
+  const ambient = createAmbientParticles({ count: preset.weatherParticles, box: presetId.startsWith('pc') ? 34 : 26 });
+  group.add(particles.group, ambient.points);
   scene.add(group);
 
-  // туман и цвет неба зависят от биома под игроком, меняются плавно
-  const palFog = BIOME_IDS.map((id) => new THREE.Color(BIOMES[id].palette.fog));
-  const palTop = BIOME_IDS.map((id) => new THREE.Color(BIOMES[id].palette.skyTop));
-  const fogColor = new THREE.Color();
-  const topColor = new THREE.Color();
-  const wTmp = new Float64Array(BIOME_IDS.length);
-  const tFog = new THREE.Color(), tTop = new THREE.Color();
-  function targetColors(x, z) {
-    sampler.biomeWeightsAt(x, z, wTmp);
-    tFog.setRGB(0, 0, 0); tTop.setRGB(0, 0, 0);
-    for (let b = 0; b < wTmp.length; b++) {
-      if (wTmp[b] <= 0) continue;
-      tFog.r += palFog[b].r * wTmp[b]; tFog.g += palFog[b].g * wTmp[b]; tFog.b += palFog[b].b * wTmp[b];
-      tTop.r += palTop[b].r * wTmp[b]; tTop.g += palTop[b].g * wTmp[b]; tTop.b += palTop[b].b * wTmp[b];
-    }
-  }
   const spawn = { x: terrain.spawn.x, z: terrain.spawn.z, y: sampler.heightAt(terrain.spawn.x, terrain.spawn.z) };
-  targetColors(spawn.x, spawn.z);
-  fogColor.copy(tFog);
-  topColor.copy(tTop);
-  scene.fog = new THREE.Fog(fogColor, preset.fogFar * 0.35, preset.fogFar);
-  scene.background = fogColor.clone();
-  sky.material.uniforms.uHorizon.value.copy(fogColor);
-  sky.material.uniforms.uTop.value.copy(topColor);
+  const wTmp = new Float64Array(BIOME_IDS.length);
+  const headTmp = new THREE.Vector3(spawn.x, spawn.y + 1.6, spawn.z);
+  sampler.biomeWeightsAt(spawn.x, spawn.z, wTmp);
+  const fog0 = sky.update(0, headTmp, wTmp, BIOME_IDS);
+  scene.fog = new THREE.Fog(fog0.clone(), preset.fogFar * 0.35, preset.fogFar);
+  scene.background = fog0.clone();
   camera.far = preset.fogFar + 20;
   camera.updateProjectionMatrix();
+
+  // стиль атмосферы: биом под игроком + ночь
+  const ambientStyle = (b, night) => {
+    if (b === 'b_mountains') return 'snow';
+    if (b === 'b_volcano') return 'ash';
+    if (b === 'b_desert_ruins') return 'dust';
+    if (b === 'b_swamp') return 'spores';
+    return night > 0.6 ? 'fireflies' : 'pollen';
+  };
+  let viewH = 900;
 
   let biome = sampler.biomeAt(spawn.x, spawn.z);
   const push = [0, 0];
@@ -138,23 +115,28 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
       push[1] = z < borderSoft ? k * (1 - z / borderSoft) : z > size - borderSoft ? -k * (1 - (size - z) / borderSoft) : 0;
       return push;
     },
-    update(dt, head) {
+    update(dt, head, renderer) {
       chunks.update(head.x, head.z);
-      sea.position.x = Math.round(head.x / 32) * 32;
-      sea.position.z = Math.round(head.z / 32) * 32;
-      sky.position.copy(head);
-      targetColors(head.x, head.z);
-      const k = 1 - Math.exp(-dt * 0.8);
-      fogColor.lerp(tFog, k);
-      topColor.lerp(tTop, k);
-      scene.fog.color.copy(fogColor);
-      scene.background.copy(fogColor);
-      sky.material.uniforms.uHorizon.value.copy(fogColor);
-      sky.material.uniforms.uTop.value.copy(topColor);
+      grass.update(head);
+      SHARED.uTime.value += dt;
+      sampler.biomeWeightsAt(head.x, head.z, wTmp);
+      const fog = sky.update(dt, head, wTmp, BIOME_IDS);
+      scene.fog.color.copy(fog);
+      scene.background.copy(fog);
+      const light = 0.35 + 0.65 * (1 - sky.night);
+      water.update(dt, head, fog, light);
       biome = sampler.biomeAt(head.x, head.z);
+      ambient.setStyle(ambientStyle(biome, sky.night));
+      if (renderer) viewH = renderer.xr.isPresenting ? 1700 : renderer.domElement.height;
+      ambient.update(dt, head, viewH);
+      particles.update(dt, viewH);
     },
+    particles,
+    get hour() { return sky.hour; },
+    /** Перевести время суток (часы 0–24), mul — скорость (1 = сутки за 40 мин). */
+    setTime(h, mul) { sky.setTime(h, mul); },
     stats() {
-      return { preset: presetId, terrainMs: terrain.ms ?? null, biome, ...chunks.stats, triangles: chunks.triangles() };
+      return { preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, ...chunks.stats, triangles: chunks.triangles() };
     },
   };
 }
