@@ -11,7 +11,8 @@ import { createPvpMap } from './pvp-map.js';
 import { slideMovement } from './pvp-layout.js?v=atu-pvp-v3';
 import { Arsenal, Breath, MODE_LABEL, WEAPONS, scopeSway, sampleSpread, samplePellet, zeroAngle, toRad } from './arsenal.js';
 import { tintWeapon, tintCharacter, skinId, skinColor } from './skins.js';
-import { QUALITY, detectQuality } from './quality.js';
+import { QUALITY, detectQuality, isStandaloneHeadset } from './quality.js';
+import { createVrMirror } from './vr-mirror.js';
 
 const { sfx } = audio;
 const classicMusic = audio.music || { start() {}, stop() {}, setIntensity() {} };
@@ -65,6 +66,9 @@ renderer.xr.enabled = true;
 renderer.xr.setFramebufferScaleFactor(quality.framebufferScale);
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
+// трансляция VR на монитор (ПК-VR); на автономном шлеме выключена; ?mirror=1 / ?mirror=0 — включить / выключить
+const mirrorParam = new URLSearchParams(location.search).get('mirror');
+const vrMirror = createVrMirror(renderer, { enabled: mirrorParam === '1' || (mirrorParam !== '0' && !isStandaloneHeadset()) });
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(deskFov(), innerWidth / innerHeight, 0.03, 300);
@@ -2448,6 +2452,7 @@ function frame(_time, _xrFrame, forcedDt) {
     try { renderScopeLens(); } catch (e) { console.warn(e); }
   }
   renderer.render(scene, camera);
+  if (xr) vrMirror.render(scene, camera, dt);
   if (!ready) { ready = true; emit('game:ready'); }
 }
 renderer.setAnimationLoop(frame);
@@ -2498,6 +2503,7 @@ if (/[?&]debug\b/.test(location.search)) {
     teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
     get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
     setTime(h, mul) { world?.setTime(h, mul); },
+    get mirror() { return { enabled: vrMirror.enabled, frames: vrMirror.frames }; },
     get worldCombat() { return world ? { hp: +worldHp.toFixed(1), enemies: enemies?.count, weapon: arsenal.current.def.id, score, combat: combatOn } : null; },
     spawn(type) { return !!enemies?.spawn(type); },
     aimNearest() {
