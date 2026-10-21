@@ -61,7 +61,7 @@ function setOpen(open) {
       const target = canResume() ? resume : document.getElementById('mp-start');
       if (target && !target.hidden) target.focus({ preventScroll: true });
     }
-    if (ready && play && !inMultiplayerRoom) {
+    if (ready && play && !inMultiplayerRoom && !document.getElementById('menu-page-play')?.hidden) {
       try { play.focus({ preventScroll: true }); } catch (_) { /* ignore */ }
     }
   }
@@ -136,7 +136,7 @@ if (mkConnect) {
 window.addEventListener('game:ready', () => {
   ready = true;
   renderPlay();
-  if (overlay && !overlay.classList.contains('is-hidden') && play) {
+  if (overlay && !overlay.classList.contains('is-hidden') && play && !document.getElementById('menu-page-play')?.hidden) {
     try { play.focus({ preventScroll: true }); } catch (_) { /* ignore */ }
   }
 });

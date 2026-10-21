@@ -280,10 +280,12 @@
     #mp-controls-tip[hidden] { display: none; }
     body.mp-in-room #play { display: none !important; }
   </style>
+  <link rel="stylesheet" href="../js/main-menu.css?v=20261021-menu-1">
   <script type="importmap">
     {
       "imports": {
         "three": "../vendor/three.module.js",
+        "three/addons/webxr/VRButton.js": "../vendor/addons/webxr/VRButton.js?v=20261021-menu-1",
         "three/addons/": "../vendor/addons/",
         "iwer": "https://cdn.jsdelivr.net/npm/iwer@2.4.0/build/iwer.module.js"
       }
@@ -293,91 +295,81 @@
 <body class="ov-open">
   <div id="overlay" role="dialog" aria-modal="true" aria-labelledby="ov-title">
     <div class="ov-inner">
-      <button id="menu-resume" type="button" hidden>← Вернуться в игру</button>
-      <div class="atu-brand" aria-label="ATU — VR тир"><span class="atu-mark">A<span>T</span>U</span><span class="atu-separator"></span><span class="atu-brand-text">АРЕНА<br>ТАКТИЧЕСКИЙ ТИР</span></div>
-      <h1 class="ov-title" id="ov-title"><span class="t-vr">VR</span> <span class="t-tir">ТИР</span></h1>
-      <p class="ov-tagline">Неоновый тир от первого лица · WebXR + Arduino</p>
-
-      <button id="play" type="button" disabled>ОДИНОЧНАЯ ИГРА</button>
-
-      <div class="cards">
-        <section class="card pc">
-          <h2>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-            ПК
-          </h2>
-          <dl>
-            <dt><kbd>WASD</kbd></dt><dd>ходьба</dd>
-            <dt><kbd>Shift</kbd></dt><dd>бег (в прицеле снайперки — задержать дыхание)</dd>
-            <dt><kbd>C</kbd></dt><dd>присесть</dd>
-            <dt><kbd>Пробел</kbd></dt><dd>прыжок</dd>
-            <dt><kbd>Мышь</kbd></dt><dd>обзор</dd>
-            <dt><kbd>Q</kbd><kbd>E</kbd></dt><dd>поворот</dd>
-            <dt><kbd>ЛКМ</kbd></dt><dd>огонь</dd>
-            <dt><kbd>ПКМ</kbd></dt><dd>прицелиться</dd>
-            <dt><kbd>R</kbd></dt><dd>перезарядка</dd>
-            <dt><kbd>1–5</kbd><kbd>Колесо мыши</kbd></dt><dd>оружие</dd>
-            <dt><kbd>B</kbd></dt><dd>режим огня</dd>
-            <dt><kbd>Esc</kbd></dt><dd>отпустить мышь</dd>
-          </dl>
+      <aside class="menu-sidebar">
+        <a class="menu-brand" href="../" aria-label="Академия ATU — главный экран">
+          <span class="menu-logo"><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M5 20 14 5l9 15M9 15h10M5 23h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="14" cy="20" r="2" fill="currentColor"/></svg></span>
+          <span><strong>ATU</strong><small>ACADEMY / VR</small></span>
+        </a>
+        <nav class="menu-nav" aria-label="Главное меню">
+          <button type="button" data-menu-page="play" aria-current="page" aria-controls="menu-page-play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 10 7-10 7V5Z"/><path d="M4 5v14"/></svg>Играть</button>
+          <button type="button" data-menu-page="network" aria-controls="menu-page-network"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 5"/></svg>С друзьями</button>
+          <button type="button" data-menu-page="help" aria-controls="menu-page-help"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M7 10h1m3 0h1m3 0h1m-9 4h1m3 0h5"/></svg>Управление</button>
+          <button type="button" data-menu-page="settings" aria-controls="menu-page-settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="#101718"/><circle cx="15" cy="17" r="3" fill="#101718"/></svg>Настройки</button>
+        </nav>
+        <div class="menu-sidebar-foot"><strong>Твой мир. Твои правила.</strong>Клавиатура · контроллеры · VR</div>
+      </aside>
+      <main class="menu-content">
+        <header class="menu-topbar"><span class="menu-eyebrow">ТЕРРИТОРИЯ НОВЫХ ВПЕЧАТЛЕНИЙ</span><span class="menu-status" id="menu-load-status" role="status">Готовим пространство</span></header>
+        <button id="menu-resume" type="button" hidden>← Вернуться в игру</button>
+        <section data-menu-panel="play" id="menu-page-play" aria-labelledby="ov-title">
+          <h1 class="menu-heading" id="ov-title">Куда отправимся?</h1>
+          <p class="menu-subheading">Исследуй неизвестное. Испытай магию. Попади точно в цель.</p>
+          <article class="menu-world-hero">
+            <div class="menu-world-copy">
+              <p class="menu-kicker"><span class="menu-new">НОВОЕ</span> БОЛЬШОЕ ПРИКЛЮЧЕНИЕ</p>
+              <h2>Открытый мир</h2>
+              <p>От солнечных аулов до пепельных вершин. Открывай места, выполняй квесты и становись сильнее.</p>
+              <div class="menu-hero-actions" id="menu-world-actions"><a id="world-link" class="menu-primary" href="?mode=world">Начать путешествие <span aria-hidden="true">↗</span></a></div>
+            </div>
+            <div class="menu-world-art" aria-hidden="true">
+              <svg viewBox="0 0 620 360" preserveAspectRatio="xMidYMid slice">
+                <defs>
+                  <linearGradient id="menu-sky" x2="0" y2="1"><stop stop-color="#47776c"/><stop offset="1" stop-color="#233d39"/></linearGradient>
+                  <linearGradient id="menu-moon" x2=".8" y2="1"><stop stop-color="#f7e8ac"/><stop offset="1" stop-color="#b5c98a"/></linearGradient>
+                  <linearGradient id="menu-portal" x2="0" y2="1"><stop stop-color="#d6f5ba"/><stop offset="1" stop-color="#477d65"/></linearGradient>
+                  <linearGradient id="menu-art-fade"><stop stop-color="#233d39"/><stop offset=".45" stop-color="#233d39" stop-opacity="0"/></linearGradient>
+                </defs>
+                <path fill="url(#menu-sky)" d="M0 0h620v360H0z"/>
+                <circle cx="367" cy="133" r="86" fill="none" stroke="#d2dfb5" stroke-opacity=".14"/>
+                <circle cx="367" cy="133" r="102" fill="none" stroke="#d2dfb5" stroke-opacity=".08"/>
+                <circle cx="367" cy="133" r="65" fill="url(#menu-moon)"/>
+                <path d="m76 267 126-153 91 120 64-63 94 114 85-151 84 104v122H0Z" fill="#416b60"/>
+                <path d="m202 114-34 86 34-24 25 10ZM536 134l-25 70 25-19 19 13Z" fill="#c9d5ae" opacity=".42"/>
+                <path d="M-40 301q130-125 259-41t252-30 189 39v121H0Z" fill="#294f46"/>
+                <path d="M-30 326q160-80 260-19t211-30 195 9v104H0Z" fill="#1a3831"/>
+                <ellipse cx="376" cy="307" rx="82" ry="15" fill="#101f1c" opacity=".6"/>
+                <path d="M330 294V183a45 45 0 0 1 90 0v111" fill="none" stroke="#102f2b" stroke-width="23"/>
+                <path d="M335 293V184a40 40 0 0 1 80 0v109" fill="none" stroke="#a8bc8b" stroke-width="3"/>
+                <path d="M347 295V187a28 28 0 0 1 56 0v108Z" fill="url(#menu-portal)"/>
+                <path d="m347 270 16-25 18 17 22-40v73h-56Z" fill="#37634e"/>
+                <path d="m339 295-16 11h106l-17-11ZM323 308l-13 9h133l-14-9Z" fill="#839b73"/>
+                <path d="M367 316q-14 14-33 22t-4 22h90q-67-22-32-44" fill="#a6ba87" opacity=".22"/>
+                <path d="M476 268v-48m-17 13 17-34 18 34m-28 16 10-20 11 20M251 290v-34m-12 10 12-26 13 26" fill="#183b32" stroke="#183b32" stroke-width="6" stroke-linejoin="round"/>
+                <path d="M530 290v-13m-7 13h14M278 309v-15m-8 15h16M458 322v-12m-6 12h12" stroke="#718b62" stroke-width="2"/>
+                <g fill="#ecedc4"><circle cx="296" cy="87" r="1.5"/><circle cx="466" cy="102" r="1.5"/><circle cx="497" cy="66" r="2"/><circle cx="286" cy="176" r="1"/><circle cx="440" cy="180" r="1.5"/></g>
+                <path d="M458 75h13m-6.5-6.5v13M287 117h9m-4.5-4.5v9" stroke="#e7e9be" stroke-opacity=".6"/>
+                <path fill="url(#menu-art-fade)" d="M0 0h620v360H0z"/>
+              </svg>
+            </div>
+            <div class="menu-hero-caption">ШЕСТЬ БИОМОВ · ОДИН ТВОЙ ПУТЬ</div>
+          </article>
+          <div class="menu-section-label">Больше способов играть <span>Выбирай свой ритм</span></div>
+          <div class="menu-mode-grid">
+            <article class="menu-mode">
+              <svg class="mode-symbol" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><circle cx="22" cy="22" r="16"/><circle cx="22" cy="22" r="9"/><circle cx="22" cy="22" r="2" fill="currentColor"/><path d="M22 0v12m0 20v12M0 22h12m20 0h12"/></svg>
+              <span class="mode-number">01 / ТОЧНОСТЬ И РЕАКЦИЯ</span><h2>Классический тир</h2><p>Пять видов оружия, дальние мишени и 60 секунд, чтобы побить свой рекорд.</p>
+              <div id="menu-range-actions"><button id="play" type="button" disabled>Загрузка…</button></div>
+            </article>
+            <article class="menu-mode menu-magic">
+              <svg class="mode-symbol" viewBox="0 0 44 44" fill="none" stroke="currentColor" aria-hidden="true"><path d="m22 3 4 14 15 5-15 5-4 14-4-14L3 22l15-5Z"/><circle cx="22" cy="22" r="14" stroke-dasharray="2 5"/></svg>
+              <span class="mode-number">02 / ПО ТУ СТОРОНУ ЭКРАНА</span><h2>Арена магов</h2><p>Заклинания в твоих руках. Сражайся с существами и почувствуй себя внутри игры.</p>
+              <button type="button" id="menu-vr" class="menu-secondary" disabled>Проверяем VR…</button><span id="menu-vr-note" class="menu-mode-note" role="status">Для игры нужен VR-шлем</span>
+            </article>
+          </div>
         </section>
-
-        <section class="card vr">
-          <h2>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3.4l-1.4-2.4h-4.4L8.4 17H5a2 2 0 0 1-2-2z"/><circle cx="8" cy="12" r="1.2"/><circle cx="16" cy="12" r="1.2"/></svg>
-            VR-шлем
-          </h2>
-          <dl>
-            <dt><kbd>Левый стик</kbd></dt><dd>ходьба (нажатие — бег)</dd>
-            <dt><kbd>Правый стик</kbd></dt><dd>поворот (нажатие — режим огня)</dd>
-            <dt><kbd>Курок</kbd></dt><dd>огонь</dd>
-            <dt><kbd>Правый хват</kbd></dt><dd>прицел</dd>
-            <dt><kbd>Левый хват</kbd></dt><dd>перезарядка</dd>
-            <dt><kbd>A</kbd></dt><dd>прыжок</dd>
-            <dt><kbd>X</kbd></dt><dd>присесть</dd>
-            <dt><kbd>B</kbd><kbd>Y</kbd></dt><dd>следующее / предыдущее оружие</dd>
-          </dl>
-          <p class="note">Кнопка <b>«ВОЙТИ В VR»</b> внизу экрана.</p>
-        </section>
-
-        <section class="card mk">
-          <h2>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg>
-            МК Arduino
-          </h2>
-          <dl>
-            <dt><kbd>Джойстик</kbd></dt><dd>ходьба</dd>
-            <dt><kbd>Кнопка</kbd></dt><dd>огонь (удержание — очередь)</dd>
-          </dl>
-          <p class="note">Подключи в <b>Chrome/Edge</b> до входа в VR.</p>
-        </section>
-
-        <section class="card arsenal">
-          <h2>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg>
-            Арсенал
-          </h2>
-          <dl>
-            <dt><kbd>1</kbd></dt><dd><b>ПМ</b> — пистолет Макарова, 9×18&nbsp;мм, 8+1</dd>
-            <dt><kbd>2</kbd></dt><dd><b>АК-74М</b> — автомат Калашникова, 5,45×39&nbsp;мм, 30+1, авто/одиночный</dd>
-            <dt><kbd>3</kbd></dt><dd><b>МР-133</b> — помповое ружьё, 12&nbsp;калибр, 6+1, картечь</dd>
-            <dt><kbd>4</kbd></dt><dd><b>СВ-98</b> — снайперская винтовка, 7,62×54R, 10+1, прицел&nbsp;7×</dd>
-            <dt><kbd>5</kbd></dt><dd><b>Бластер «Неон»</b> — энергетический, перегрев вместо патронов</dd>
-          </dl>
-          <p class="note">Пули летят по баллистике: скорость, снижение, пробитие. Дальний рубеж — гонги на <b>40, 75 и 110&nbsp;м</b>.</p>
-        </section>
-      </div>
-
-      <p class="rules">
-        <b class="r-t">60 секунд</b> · <b class="r-c">кристалл +1</b> · <b class="r-g">золотой +3</b> · <b class="r-p">бомба −5</b> · <b class="r-m">серия из 5 попаданий = множитель до x4</b> · <b class="r-g">гонги 40/75/110 м: +2/+3/+5</b>
-      </p>
-
-      <section id="skin-section" aria-label="Настройка внешнего вида" style="max-width:680px;margin:18px auto 0;padding:16px 20px;border:1px solid rgba(255,210,63,.28);border-radius:18px;background:rgba(8,12,35,.78);text-align:left">
-        <label for="skin-select" style="display:block;font-weight:700;color:#ffd23f;margin-bottom:8px">СКИН ОРУЖИЯ И ПЕРСОНАЖА</label>
-        <select id="skin-select" style="width:100%;padding:12px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit"></select>
-        <p style="color:#a9b6e6;font-size:13px;margin-bottom:0">Выбран: <span id="skin-description">КИБЕР-ЛЁД</span>. Скин сохраняется на этом устройстве.</p>
-      </section>
-      <section id="mp-section" aria-label="Сетевая игра">
+        <section data-menu-panel="network" id="menu-page-network" aria-labelledby="menu-network-title" hidden>
+          <h1 class="menu-heading" id="menu-network-title">Вместе интереснее.</h1><p class="menu-subheading menu-page-intro">Пригласи друзей в свою комнату или присоединяйся по коду. Соревнуйтесь в тире или встречайтесь на арене.</p>
+          <section id="mp-section" aria-label="Сетевая игра">
         <h2>СЕТЕВАЯ ИГРА</h2>
         <p class="mp-muted">Создайте свою комнату или подключитесь к друзьям по трём цифрам.</p>
         <div id="mp-panel">
@@ -429,9 +421,98 @@
         <button id="mp-cancel" type="button" hidden>Отменить подключение</button>
         <p id="mp-status" role="status">Сервер подключён автоматически.</p>
       </section>
-      <p class="ov-foot">Esc или «← Меню» — открыть меню. Выход из комнаты возвращает в главное меню.</p>
+          <section class="menu-cast-panel"><h2>Посмотреть игру из шлема</h2><form class="ov-cast" id="cast-watch">
+        <span>📺 Код трансляции этого устройства: <b id="cast-code">——</b></span>
+        <span class="ov-cast-watch"><input id="cast-input" inputmode="numeric" maxlength="6" placeholder="код из шлема" aria-label="Код трансляции"><button type="submit">Смотреть трансляцию</button></span>
+      </form></section>
+        </section>
+        <section data-menu-panel="help" id="menu-page-help" aria-labelledby="menu-help-title" hidden>
+          <h1 class="menu-heading" id="menu-help-title">Освоишь за минуту.</h1><p class="menu-subheading">Клавиатура и мышь, VR-контроллеры или Arduino — выбирай удобный способ.</p>
+          <div class="cards">
+        <section class="card pc">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+            ПК
+          </h2>
+          <dl>
+            <dt><kbd>WASD</kbd></dt><dd>ходьба</dd>
+            <dt><kbd>Shift</kbd></dt><dd>бег (в прицеле снайперки — задержать дыхание)</dd>
+            <dt><kbd>C</kbd></dt><dd>присесть</dd>
+            <dt><kbd>Пробел</kbd></dt><dd>прыжок</dd>
+            <dt><kbd>Мышь</kbd></dt><dd>обзор</dd>
+            <dt><kbd>Q</kbd><kbd>E</kbd></dt><dd>поворот</dd>
+            <dt><kbd>ЛКМ</kbd></dt><dd>огонь</dd>
+            <dt><kbd>ПКМ</kbd></dt><dd>прицелиться</dd>
+            <dt><kbd>R</kbd></dt><dd>перезарядка</dd>
+            <dt><kbd>1–5</kbd><kbd>Колесо мыши</kbd></dt><dd>оружие</dd>
+            <dt><kbd>B</kbd></dt><dd>режим огня</dd>
+            <dt><kbd>Esc</kbd></dt><dd>отпустить мышь</dd>
+          </dl>
+        </section>
+
+        <section class="card vr">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3.4l-1.4-2.4h-4.4L8.4 17H5a2 2 0 0 1-2-2z"/><circle cx="8" cy="12" r="1.2"/><circle cx="16" cy="12" r="1.2"/></svg>
+            VR-шлем
+          </h2>
+          <dl>
+            <dt><kbd>Левый стик</kbd></dt><dd>ходьба (нажатие — бег)</dd>
+            <dt><kbd>Правый стик</kbd></dt><dd>поворот (нажатие — режим огня)</dd>
+            <dt><kbd>Курок</kbd></dt><dd>огонь</dd>
+            <dt><kbd>Правый хват</kbd></dt><dd>прицел</dd>
+            <dt><kbd>Левый хват</kbd></dt><dd>перезарядка</dd>
+            <dt><kbd>A</kbd></dt><dd>прыжок</dd>
+            <dt><kbd>X</kbd></dt><dd>присесть</dd>
+            <dt><kbd>B</kbd><kbd>Y</kbd></dt><dd>следующее / предыдущее оружие</dd>
+          </dl>
+          <p class="note">Кнопка <b>«ВОЙТИ В VR»</b> внизу экрана. В шлеме сразу запускается <b>«Арена магов»</b>, классический тир включается в меню в шлеме или в «Настройках» → «Режим в VR».</p>
+        </section>
+
+        <section class="card mk">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/></svg>
+            МК Arduino
+          </h2>
+          <dl>
+            <dt><kbd>Джойстик</kbd></dt><dd>ходьба</dd>
+            <dt><kbd>Кнопка</kbd></dt><dd>огонь (удержание — очередь)</dd>
+          </dl>
+          <p class="note">Подключи в <b>Chrome/Edge</b> до входа в VR.</p>
+        </section>
+
+        <section class="card arsenal">
+          <h2>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg>
+            Арсенал
+          </h2>
+          <dl>
+            <dt><kbd>1</kbd></dt><dd><b>ПМ</b> — пистолет Макарова, 9×18&nbsp;мм, 8+1</dd>
+            <dt><kbd>2</kbd></dt><dd><b>АК-74М</b> — автомат Калашникова, 5,45×39&nbsp;мм, 30+1, авто/одиночный</dd>
+            <dt><kbd>3</kbd></dt><dd><b>МР-133</b> — помповое ружьё, 12&nbsp;калибр, 6+1, картечь</dd>
+            <dt><kbd>4</kbd></dt><dd><b>СВ-98</b> — снайперская винтовка, 7,62×54R, 10+1, прицел&nbsp;7×</dd>
+            <dt><kbd>5</kbd></dt><dd><b>Бластер «Неон»</b> — энергетический, перегрев вместо патронов</dd>
+          </dl>
+          <p class="note">Пули летят по баллистике: скорость, снижение, пробитие. Дальний рубеж — гонги на <b>40, 75 и 110&nbsp;м</b>.</p>
+        </section>
+      </div>
+          <p class="rules">
+        <b class="r-t">60 секунд</b> · <b class="r-c">кристалл +1</b> · <b class="r-g">золотой +3</b> · <b class="r-p">бомба −5</b> · <b class="r-m">серия из 5 попаданий = множитель до x4</b> · <b class="r-g">гонги 40/75/110 м: +2/+3/+5</b>
+      </p>
+          <div class="menu-device" id="menu-device-slot"></div>
+        </section>
+        <section data-menu-panel="settings" id="menu-page-settings" aria-labelledby="menu-settings-title" hidden>
+          <h1 class="menu-heading" id="menu-settings-title">Сделай игру своей.</h1><p class="menu-subheading">Настрой звук, движение и графику. Выбери внешний вид, который тебе нравится.</p>
+          <div id="menu-settings-content"><section id="skin-section" aria-label="Настройка внешнего вида" style="max-width:680px;margin:18px auto 0;padding:16px 20px;border:1px solid rgba(255,210,63,.28);border-radius:18px;background:rgba(8,12,35,.78);text-align:left">
+        <label for="skin-select" style="display:block;font-weight:700;color:#ffd23f;margin-bottom:8px">СКИН ОРУЖИЯ И ПЕРСОНАЖА</label>
+        <select id="skin-select" style="width:100%;padding:12px;background:#111a31;color:#fff;border:1px solid #7385ba;border-radius:10px;font:inherit"></select>
+        <p style="color:#a9b6e6;font-size:13px;margin-bottom:0">Выбран: <span id="skin-description">КИБЕР-ЛЁД</span>. Скин сохраняется на этом устройстве.</p>
+      </section></div>
+        </section>
+        <footer class="menu-footer"><span>Академия ATU <span aria-hidden="true">/</span> Место для новых миров</span><button type="button" data-menu-page="help">Как играть <span aria-hidden="true">↗</span></button></footer>
+      </main>
     </div>
   </div>
+
 
   <button id="help-btn" type="button" title="Открыть меню (Esc)" aria-label="Вернуться в меню">← Меню · Esc</button>
 
@@ -667,9 +748,10 @@
         'Проверьте интернет, блокировщик рекламы/прокси и адрес в importmap, затем перезагрузите страницу.');
     }
   </script>
-  <script type="module" src="../js/overlay.js?v=20261021-progression-1"></script>
+  <script type="module" src="../js/overlay.js?v=20261021-menu-1"></script>
+  <script type="module" src="../js/main-menu.js?v=20261021-menu-1"></script>
   <script type="module" src="../js/skin-ui.js?v=atu-netplay-20261016c"></script>
-  <script type="module" src="../js/main.js?v=20261021-progression-1"></script>
+  <script type="module" src="../js/main.js?v=20261021-menu-1"></script>
   <script type="module" src="../js/multiplayer-ui.js?v=atu-bastion-v2"></script>
 </body>
 </html>

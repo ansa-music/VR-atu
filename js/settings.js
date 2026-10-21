@@ -252,7 +252,7 @@ const NOTE_RELOAD = 'Новое качество применится после
 // блок «НАСТРОЙКИ» в '.ov-inner' перед '#mp-section' (иначе перед '.ov-foot'); заменяет старый
 export function buildSettingsUi({ qualityLabel } = {}) {
   if (typeof document === 'undefined') return null;
-  const host = document.querySelector('.ov-inner');
+  const host = document.getElementById('menu-settings-content') || document.querySelector('.ov-inner');
   if (!host) return null;
   injectStyle();
   document.getElementById('settings-section')?.remove();
