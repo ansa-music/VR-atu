@@ -38,7 +38,7 @@ function renderPlay() {
 }
 
 // открытый мир (?mode=world): ссылка на стартовом экране ведёт обратно в тир
-const worldMode = new URLSearchParams(location.search).get('mode') === 'world';
+const worldMode = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mode') === 'world';
 const worldLink = document.getElementById('world-link');
 if (worldLink && worldMode) {
   worldLink.textContent = '← Обратно в тир';
