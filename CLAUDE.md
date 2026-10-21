@@ -43,7 +43,9 @@
 
 ## Фэнтези и открытый мир
 - В шлеме по умолчанию «Академия ATU — Арена магов» (`js/fantasy/*`, план `docs/FANTASY-PLAN.md`, отчёты `docs/fantasy/`). Тест в эмуляторе: `tests/xr.html?debug&quality=low` (`window.xrTest`).
-- Открытый мир: дизайн-документ `docs/world/VR-ATU-OPENWORLD-DESIGN.md` (канон, фазы 0–7). Фаза 0 в репозитории: данные `shared/defs/*`, формула урона `shared/damage.js`, `js/render/{quality-presets,toon}.js`, проверки `tools/*.mjs`, тесты `tests/*.test.mjs` (`node --test tests/*.test.mjs`; `node --test tests/` в Node 22+ не работает). Игрой эти модули пока не используются.
+- Открытый мир: дизайн-документ `docs/world/VR-ATU-OPENWORLD-DESIGN.md` (канон, фазы 0–7). Фаза 0 в репозитории: данные `shared/defs/*`, формула урона `shared/damage.js`, `js/render/{quality-presets,toon}.js`, проверки `tools/*.mjs`, тесты `tests/*.test.mjs` (`node --test tests/*.test.mjs`; `node --test tests/` в Node 22+ не работает).
+- Фаза 1 (`?mode=world`, ссылка «Открытый мир» на стартовом экране): `js/world/noise.js` (simplex, mulberry32), `heightmap.js` (маска биомов, рельеф, площадки POI, цвета; карта 769×769 с шагом 2 м), `terrain-worker.js` (считает карту, ~0,7 с на ПК), `chunks.js` (LOD0 — пул мешей, LOD1/LOD2 — склеенные кольца, юбки), `index.js` (`createWorld`: море, небо, туман по биому). В `main.js` переменная `world`: `worldStep()` ведёт по рельефу (склон > 45° и глубокая вода — стена), раунды тира и мишени выключены. `?wq=quest|phone|pc_low|pc_high` — пресет мира.
+- Отладка без видимой панели: `vrTirDebug.tick(n, dt)` прогоняет кадры вручную, `vrTirDebug.world` — чанки и позиция, `move('KeyW', ms)`, `teleport(x, undefined, z)` ставит на рельеф.
 
-## Состояние на 2026-10-19
-Оружие, оптимизация, комфорт VR и «Арена магов» в `main`, проверены на ПК и в эмуляторе Quest 3. В настоящем VR-шлеме и с реальной платой Arduino игру не проверяли. Открытый мир: готова фаза 0, следующая — фаза 1 (пустой мир, `?mode=world`).
+## Состояние на 2026-10-21
+Оружие, оптимизация, комфорт VR и «Арена магов» в `main`, проверены на ПК и в эмуляторе Quest 3. В настоящем VR-шлеме и с реальной платой Arduino игру не проверяли. Открытый мир: фазы 0 и 1 готовы (рельеф, ходьба, в эмуляторе Quest 35 вызовов отрисовки на глаз), следующая — фаза 2 (тун-графика, небо и сутки, вода, трава).

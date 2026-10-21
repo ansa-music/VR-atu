@@ -55,6 +55,8 @@ const HINT = 'ЛКМ — огонь · ПКМ — прицел · R — пере
 
 // ---------- рендер и сцена ----------
 const quality = detectQuality();
+const urlParams = new URLSearchParams(location.search);
+const WORLD_MODE = urlParams.get('mode') === 'world'; // «Открытый мир»: рельеф вместо арены, без раундов тира
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 let pixelCap = Math.min(devicePixelRatio, quality.pixelRatio); // динамическое разрешение опускает его при просадках
 renderer.setPixelRatio(pixelCap);
@@ -118,6 +120,21 @@ const range = safeCall(rangeMod.createRange, scene);
 const logo = safeCall(logoMod.createAtuLogo, scene);
 // тир, рубеж и вывеска скрываются, когда идёт PvP на карте «Бастион»
 const soloEnvironment = scene.children.filter(obj => !envBefore.has(obj) && !obj.isLight);
+// открытый мир (?mode=world): тир, рубеж и его свет скрыты; не загрузился — остаётся тир
+let world = null;
+if (WORLD_MODE) {
+  try {
+    const worldMod = await import('./world/index.js');
+    const coarse = !!globalThis.matchMedia?.('(pointer: coarse)').matches;
+    const presetId = worldMod.worldPresetId(quality, { coarse, override: urlParams.get('wq') });
+    world = await worldMod.createWorld({ scene, camera, quality, presetId });
+    for (const obj of soloEnvironment) obj.visible = false;
+    for (const obj of scene.children) if (obj.isLight) obj.visible = false;
+  } catch (e) {
+    console.warn('Открытый мир не загрузился, остаётся тир:', e);
+    world = null;
+  }
+}
 const pvpMap = createPvpMap(scene);
 let pvpEnabled = false;
 let lastMySpawnSeq = 0;
@@ -125,7 +142,7 @@ const pvpPos = new THREE.Vector3();
 function updatePvpWorld(room) {
   pvpEnabled = !!room && room.mode === 'pvp';
   pvpMap.setVisible(pvpEnabled);
-  for (const obj of soloEnvironment) obj.visible = !pvpEnabled;
+  for (const obj of soloEnvironment) obj.visible = !pvpEnabled && !world;
   if (!pvpEnabled) { lastMySpawnSeq = 0; return; }
   if (!room.players || room.phase !== 'playing') return;
   const myPlayer = room.players.find(p => p.id === multiplayerPlayerId);
@@ -532,6 +549,7 @@ function collectHittables() {
   if (scoring()) for (const t of targets.children) hittables.push(t);
   if (!sharedArena.active && menu.mesh.visible && state !== 'play') hittables.push(menu.mesh);
   if (pvpEnabled) return; // на «Бастионе» рубежа нет, попадания считает сервер
+  if (world) return;      // в открытом мире целей пока нет (фаза 1)
   if (fantasy) {
     if (combatOn) for (const m of enemies.meshes) hittables.push(m);
     for (const r of runeSet) hittables.push(r);
@@ -913,7 +931,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyB') arsenal.current.toggleMode();
   const digit = /^Digit([1-9])$/.exec(e.code);
   if (digit && Number(digit[1]) <= WEAPONS.length) arsenal.select(Number(digit[1]) - 1);
-  if (e.code === 'Enter' && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
+  if (e.code === 'Enter' && !world && !sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 
 // кнопка «Играть» на стартовом экране (клик пользователя — можно захватить мышь)
@@ -921,6 +939,7 @@ addEventListener('game:start', () => {
   if (!renderer.xr.isPresenting) {
     try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
   }
+  if (world) return; // открытый мир без раундов: просто гуляем
   if (!sharedArena.active && (state === 'menu' || state === 'over')) startGame();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -1323,9 +1342,16 @@ function updateMovement(dt) {
   const k = 1 - Math.exp(-(onGround ? MOVE.accel : MOVE.airAccel) * dt); // в воздухе почти без управления
   vel.x += (tx - vel.x) * k;
   vel.z += (tz - vel.z) * k;
+  if (world) {
+    const [bx, bz] = world.borderPush(headPos.x, headPos.z);
+    vel.x += bx * dt;
+    vel.z += bz * dt;
+  }
+  const ox = rig.position.x, oz = rig.position.z;
   rig.position.x += vel.x * dt;
   rig.position.z += vel.z * dt;
-  const r = pvpEnabled ? 0 : Math.hypot(rig.position.x, rig.position.z);
+  if (world) worldStep(ox, oz);
+  const r = pvpEnabled || world ? 0 : Math.hypot(rig.position.x, rig.position.z);
   const arenaR = fantasy ? FANTASY_ARENA : ARENA;
   if (r > arenaR) {
     const nx = rig.position.x / r, nz = rig.position.z / r;
@@ -1376,6 +1402,7 @@ function updateMovement(dt) {
   const bobA = onGround ? Math.min(1, hspeed / MOVE.walk) * (sprinting ? 0.05 : crouched ? 0.015 : 0.03) * (1 - 0.8 * aimAmt) : 0;
 
   if (!xr) {
+    if (world) rig.position.y = groundY;
     camera.position.set(
       Math.cos(walkPhase * 0.5) * bobA * 0.5,
       EYE_HEIGHT + (CROUCH_EYE - EYE_HEIGHT) * crouchAmt + feet - landDip + Math.sin(walkPhase) * bobA,
@@ -1384,6 +1411,42 @@ function updateMovement(dt) {
   } else {
     rig.position.y = groundY + feet - crouchAmt * 0.5; // опора (пол или платформа) + прыжок − присед кнопкой X
   }
+}
+
+// открытый мир: шаг по рельефу под головой. Склон круче 45° и глубокая вода — стена
+// (скольжение вдоль неё по одной оси), с обрыва — падение, на уступ до 0,4 м — шаг вверх.
+const WORLD_SLOPE = Math.tan(THREE.MathUtils.degToRad(45));
+function worldStep(ox, oz) {
+  const hx = headPos.x - ox, hz = headPos.z - oz; // голова внутри рига (в шлеме — где стоит игрок)
+  const top = groundY + feet;
+  const heightIfWalkable = (x, z) => {
+    const h = world.heightAt(x + hx, z + hz);
+    if (h < world.seaLevel - 1) return null; // плавания пока нет
+    const rise = h - top;
+    return rise > (onGround ? 0.05 + Math.hypot(x - ox, z - oz) * WORLD_SLOPE : 0.4) ? null : h;
+  };
+  let h = heightIfWalkable(rig.position.x, rig.position.z);
+  if (h === null) {
+    h = heightIfWalkable(rig.position.x, oz);
+    if (h !== null) { rig.position.z = oz; vel.z = 0; }
+    else {
+      h = heightIfWalkable(ox, rig.position.z);
+      if (h !== null) { rig.position.x = ox; vel.x = 0; }
+      else { rig.position.x = ox; rig.position.z = oz; vel.x = vel.z = 0; h = world.heightAt(ox + hx, oz + hz); }
+    }
+  }
+  const lim = world.size - 1;
+  rig.position.x = THREE.MathUtils.clamp(rig.position.x + hx, 1, lim) - hx;
+  rig.position.z = THREE.MathUtils.clamp(rig.position.z + hz, 1, lim) - hz;
+  const step = Math.hypot(rig.position.x - ox, rig.position.z - oz);
+  if (onGround && top - h > 0.1 + step * WORLD_SLOPE * 1.2) {
+    feet = top - h; vy = 0; onGround = false; // сошёл с обрыва
+  } else if (!onGround) {
+    feet = top - h;
+  } else {
+    feet = 0;
+  }
+  groundY = h;
 }
 
 // ---------- прицеливание, отдача, раскачка ----------
@@ -1542,7 +1605,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 renderer.xr.addEventListener('sessionend', () => {
   setFantasy(false);
   viewModel.visible = hasGuns;
-  rig.position.y = 0;
+  rig.position.y = world ? groundY : 0;
   camera.position.set(0, EYE_HEIGHT, 0);
   touch?.setVisible?.(true);
   emit('game:xr', { active: false });
@@ -1639,7 +1702,7 @@ const fxA = new THREE.Vector3();
 const fxB = new THREE.Vector3();
 
 function wantFantasy() {
-  return renderer.xr.isPresenting && fantasyAvailable && userSettings.mode !== 'realism' && !sharedArena.active;
+  return renderer.xr.isPresenting && fantasyAvailable && userSettings.mode !== 'realism' && !sharedArena.active && !world;
 }
 
 // кнопка «⇄ ФЭНТЕЗИ» под обычным меню: вернуться из реализма, не снимая шлем
@@ -1681,7 +1744,7 @@ function setFantasy(on) {
   if (on === fantasy) return;
   fantasy = on;
   // мир: остров вместо неоновой арены
-  for (const obj of soloEnvironment) obj.visible = !on && !pvpEnabled;
+  for (const obj of soloEnvironment) obj.visible = !on && !pvpEnabled && !world;
   fantasyWorld?.setVisible(on);
   // табло и меню: новые встают туда, где были старые
   const prevMenu = menu, prevBoard = board;
@@ -2155,7 +2218,7 @@ function warmup() {
   for (const g of Object.values(pcGuns)) g.group.visible = true;
   try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
   syncGunVisibility();
-  if (fantasyWorld) {
+  if (fantasyWorld && !world) {
     fantasyWorld.setVisible(true);
     try { renderer.compile(scene, camera); } catch (e) { console.warn(e); }
     fantasyWorld.setVisible(false);
@@ -2164,10 +2227,19 @@ function warmup() {
 applySettings();
 warmup();
 
+// открытый мир: старт в деревне Рассветный Брод, табло и меню тира не нужны
+if (world) {
+  rig.position.set(world.spawn.x, world.spawn.y, world.spawn.z);
+  groundY = world.spawn.y;
+  board.mesh.visible = false;
+  menu.mesh.visible = false;
+}
+
 // ---------- игровой цикл ----------
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
-  const raw = clock.getDelta();
+// кадр игры; forcedDt — шаг для отладки (vrTirDebug.tick), когда скрытая вкладка не даёт кадров
+function frame(_time, _xrFrame, forcedDt) {
+  const raw = forcedDt ?? clock.getDelta();
   const dt = Math.min(raw, 0.05);
   const time = clock.elapsedTime;
   const xr = renderer.xr.isPresenting;
@@ -2219,6 +2291,7 @@ renderer.setAnimationLoop(() => {
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
   updateCombat(dt, wdt);
+  world?.update(dt, headPos);
 
   // полёт пуль
   collectHittables();
@@ -2246,9 +2319,11 @@ renderer.setAnimationLoop(() => {
 
   updateTargets(wdt, time);
   fx.update(wdt);
-  env.update(dt, time);
-  range?.update?.(dt, time);
-  logo?.update?.(dt, time);
+  if (!world) {
+    env.update(dt, time);
+    range?.update?.(dt, time);
+    logo?.update?.(dt, time);
+  }
   if (fantasy) fantasyWorld.update(wdt, time);
   updateModeButton();
   updateCombatModeButton();
@@ -2271,7 +2346,8 @@ renderer.setAnimationLoop(() => {
   }
   renderer.render(scene, camera);
   if (!ready) { ready = true; emit('game:ready'); }
-});
+}
+renderer.setAnimationLoop(frame);
 let ready = false;
 emit('game:state', { state });
 
@@ -2303,7 +2379,7 @@ function updateCharacter(dt) {
     if (!fantasy) u.wrist?.update?.(wristInfo);
   }
   updateBracer();
-  if (shadowBlob) shadowBlob.position.set(headPos.x, 0.012, headPos.z);
+  if (shadowBlob) shadowBlob.position.set(headPos.x, (world ? groundY : 0) + 0.012, headPos.z);
 }
 
 // отладка: ?debug — повернуть взгляд и выбрать оружие из консоли
@@ -2316,10 +2392,13 @@ if (/[?&]debug\b/.test(location.search)) {
     get touch() { return touch; },
     get fantasy() { return { active: fantasy, mode: userSettings.mode, mana: skills?.mana, ult: skills?.ult01, timeScale: skills?.timeScale, lastCast: skills?.lastCast, kiState: skills?.kiState, groundY, menu: menu === fantasyMenu ? 'fantasy' : 'classic', modeButton: modeButton.visible }; },
     setMode(m) { setMode(m); },
-    teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y, z)); },
+    teleport(x, y, z) { moveHeadTo(new THREE.Vector3(x, y ?? world?.heightAt(x, z) ?? 0, z)); },
+    get world() { return world ? { ...world.stats(), pos: [+headPos.x.toFixed(1), +headPos.y.toFixed(2), +headPos.z.toFixed(1)], groundY: +groundY.toFixed(2), feet: +feet.toFixed(2), onGround } : null; },
+    move(keyCode, ms = 500) { keys.add(keyCode); setTimeout(() => keys.delete(keyCode), ms); },
     get skills() { return skills; },
     get combat() { return { on: combatOn, mode: director?.mode, running: director?.running, enemies: enemies?.count, hp: director?.hp, weapon: arsenal.current.def.id, mana: arsenal.current.mana, wave: director?.wave }; },
     startRound() { if (state === 'menu' || state === 'over') startGame(); },
+    tick(n = 1, dt = 1 / 60) { for (let i = 0; i < n; i++) frame(0, null, dt); return this.world || this.state; },
     get holsters() { return holsters; },
     get handling() { return handling; },
     get state() { return { state, score, combo, shots, hits, weapon: arsenal.current.def.id, mag: arsenal.current.mag, aimAmt, scoped }; },

@@ -30,11 +30,19 @@ function renderPlay() {
   play.hidden = inMultiplayerRoom;
   if (!ready) {
     play.disabled = true;
-    play.textContent = 'Загрузка…';
+    play.textContent = worldMode ? 'Загрузка мира…' : 'Загрузка…';
     return;
   }
   play.disabled = false;
-  play.textContent = isRunning() ? '▶ ПРОДОЛЖИТЬ ОДИНОЧНУЮ' : '▶ ОДИНОЧНАЯ ИГРА';
+  play.textContent = worldMode ? '▶ ОТКРЫТЫЙ МИР' : isRunning() ? '▶ ПРОДОЛЖИТЬ ОДИНОЧНУЮ' : '▶ ОДИНОЧНАЯ ИГРА';
+}
+
+// открытый мир (?mode=world): ссылка на стартовом экране ведёт обратно в тир
+const worldMode = new URLSearchParams(location.search).get('mode') === 'world';
+const worldLink = document.getElementById('world-link');
+if (worldLink && worldMode) {
+  worldLink.textContent = '← Обратно в тир';
+  worldLink.href = './';
 }
 
 function setOpen(open) {
