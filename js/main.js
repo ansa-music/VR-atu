@@ -25,7 +25,7 @@ const load = (path) => import(path).catch((e) => { console.warn('Модуль н
 const [gunMod, charMod, gfxMod, ballMod, rangeMod, logoMod, hudMod, comfortMod, settingsMod, holsterMod, handlingMod, touchMod] = await Promise.all([
   load('./guns.js'), load('./character.js'), load('./graphics.js'), load('./ballistics.js'),
   load('./range.js'), load('./logo.js'), load('./hud.js'), load('./vr-comfort.js'),
-  load('./settings.js'), load('./vr-holsters.js'), load('./vr-handling.js'), load('./touch.js'),
+  load('./settings.js' + new URL(import.meta.url).search), load('./vr-holsters.js'), load('./vr-handling.js'), load('./touch.js'),
 ]);
 // фэнтези-режим VR «Арена магов»
 const [fworldMod, fuiMod, fbracerMod, faudioMod, skillsMod, gesturesMod] = await Promise.all([
@@ -1644,8 +1644,27 @@ function follow(obj, dist, height, speed, dt) {
   obj.lookAt(headPos.x, obj.position.y, headPos.z);
 }
 
+function returnToSoloMenu() {
+  ballistics.clear(); clearTargets(); music.stop(); countdown = 0; timeLeft = ROUND_TIME; elapsed = 0;
+  setState('menu'); menu.mesh.visible = true; menu.showStart(ROUND_TIME, fantasy ? 'fantasy' : 'realism');
+  menu.mesh.userData.readyAt = performance.now() + 300;
+}
+function resetSessionInput() {
+  keys.clear(); pcTrigger.held = pcTrigger.first = false; mkTrigger.first = false;
+  aimHeld = vrAim = vrSprint = vrCrouch = jumpRequested = false; vel.set(0, 0, 0);
+  bowCtl?.cancel?.(); melee?.reset?.(); if (arsenal.current.manaFed) arsenal.current.charging = null;
+  for (const c of controllers) {
+    const u = c.userData;
+    u.trigHeld = u.trigFirst = u.trigReleased = u.skillTrig = u.progressionTrig = false;
+    u.gripHeld = u.skill = u.turned = false; u.prevButtons.fill(false);
+    if (u.grabbed) { handling?.release?.(c); u.grabbed = null; }
+  }
+}
 // после выхода из VR возвращаем камеру в «рост»
 renderer.xr.addEventListener('sessionstart', () => {
+  resetSessionInput();
+  if (progressionBridge?.api.menuOpen) progressionBridge.api.closeMenu();
+  try { document.exitPointerLock?.(); } catch {}
   // фиксированный фовеальный рендер: края кадра в шлеме рисуются в меньшем разрешении
   try { renderer.xr.setFoveation(quality.foveation); } catch {}
   frameStats.reset();
@@ -1655,11 +1674,16 @@ renderer.xr.addEventListener('sessionstart', () => {
   camera.fov = deskFov();
   camera.updateProjectionMatrix();
   touch?.setVisible?.(false);
-  setFantasy(wantFantasy());
+  const enterFantasy = wantFantasy();
+  if (enterFantasy && !fantasy && (state === 'play' || state === 'countdown')) returnToSoloMenu();
+  setFantasy(enterFantasy);
   emit('game:xr', { active: true });
 });
 renderer.xr.addEventListener('sessionend', () => {
+  resetSessionInput();
+  const wasFantasy = fantasy;
   setFantasy(false);
+  if (wasFantasy && !world && !sharedArena.active) returnToSoloMenu();
   viewModel.visible = hasGuns;
   rig.position.y = world ? groundY : 0;
   camera.position.set(0, EYE_HEIGHT, 0);
