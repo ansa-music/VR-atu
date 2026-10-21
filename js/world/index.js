@@ -11,6 +11,7 @@ import { createGrass } from './grass.js';
 import { createProps } from './props.js';
 import { createAmbientAudio } from './ambient-audio.js';
 import { createKzWorld } from './kz-world.js';
+import { createBestiary } from './bestiary/populate.js';
 import { createBurstParticles, createAmbientParticles } from '../render/gpu-particles.js';
 import { DAMAGE_TYPE_VFX } from '../../shared/defs/damage-vfx.js';
 
@@ -105,6 +106,9 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
   // казахское оформление: аулы, шаңырақ-порталы, балбалы, мавзолеи, названия, кюй
   const kz = createKzWorld({ heightAt: sampler.heightAt, biomeAt: sampler.biomeAt, seaLevel, quality: presetId });
   group.add(kz.group);
+  // бестиарии (74 + 74): витрина по биомам, два ряда; сбой не должен ронять мир
+  let bestiary = null;
+  try { bestiary = createBestiary({ group, heightAt: sampler.heightAt }); } catch (e) { console.warn('[bestiary] не запустился', e); }
   let onTitle = null, combat01 = 0;
   const push = [0, 0];
 
@@ -146,6 +150,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
       ambient.setStyle(ambientStyle(biome, sky.night));
       nature.update(dt, biome, sky.night);
       const title = kz.update(dt, head, biome, null, { combat: combat01 }); // LOD построек обновляет сам рендер
+      bestiary?.update(dt, head);
       if (title && onTitle) onTitle(title);
       if (renderer) viewH = renderer.xr.isPresenting ? 1700 : renderer.domElement.height;
       ambient.update(dt, head, viewH);
@@ -157,7 +162,7 @@ export async function createWorld({ scene, camera, quality, presetId = worldPres
     /** Перевести время суток (часы 0–24), mul — скорость (1 = сутки за 40 мин). */
     setTime(h, mul) { sky.setTime(h, mul); },
     stats() {
-      return { kz: kz.stats, preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, props: props?.stats ?? null, ...chunks.stats, triangles: chunks.triangles() };
+      return { bestiary: bestiary?.stats, kz: kz.stats, preset: presetId, terrainMs: terrain.ms ?? null, biome, hour: +sky.hour.toFixed(2), night: +sky.night.toFixed(2), ambient: ambient.style, grass: grass.stats.count, grassMs: grass.stats.ms, props: props?.stats ?? null, ...chunks.stats, triangles: chunks.triangles() };
     },
   };
 }
