@@ -966,6 +966,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.repeat) return;
   if (e.code === 'Space' && !renderer.xr.isPresenting) { e.preventDefault(); jumpRequested = true; }
+  if (world && !e.repeat && castSkillKey(e.code)) return;
   if (e.code === 'KeyR') arsenal.current.startReload();
   if (e.code === 'KeyB') { if (combatOn && arsenal.current.def.id === 'staff') wpnMod.nextElement?.(arsenal.current); else arsenal.current.toggleMode?.(); }
   const digit = /^Digit([1-9])$/.exec(e.code);
@@ -1060,7 +1061,7 @@ const controllers = [0, 1].map((i) => {
     if (progressionVr?.select(c)) { c.userData.progressionTrig = true; return; }
     // фэнтези: курок свободной руки рисует руну, у руки с оружием — ульта
     const bowString = combatOn && c !== weaponHand && arsenal.current.def.action === 'bow'; // курок свободной руки — тетива
-    if (fantasy && !bowString && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
+    if ((fantasy || world) && !bowString && skills?.onTrigger?.(c, true)) { c.userData.skillTrig = true; return; }
     c.userData.trigHeld = true; c.userData.trigFirst = true;
   });
   c.addEventListener('selectend', () => {
@@ -1118,7 +1119,7 @@ function onSqueeze(c, down) {
     return;
   }
   if (c !== weaponHand && combatOn && arsenal.current.def.action === 'bow') return; // хват свободной руки — тетива
-  if (c !== weaponHand && fantasy) {
+  if (c !== weaponHand && (fantasy || world)) {
     // ладонь вверх — энергосфера, ладонь вперёд — барьер; иначе перезарядка кнопкой
     if (skills?.onSqueeze?.(c, true)) u.skill = true;
     else arsenal.current.startReload();
@@ -1320,8 +1321,8 @@ function updateMovement(dt) {
   if (keys.has('KeyD')) move.x += 1;
   if (keys.has('KeyA')) move.x -= 1;
   if (!xr) {
-    if (keys.has('ArrowLeft') || keys.has('KeyQ')) yaw += TURN_SPEED * dt;
-    if (keys.has('ArrowRight') || keys.has('KeyE')) yaw -= TURN_SPEED * dt;
+    if (keys.has('ArrowLeft') || (!world && keys.has('KeyQ'))) yaw += TURN_SPEED * dt;
+    if (keys.has('ArrowRight') || (!world && keys.has('KeyE'))) yaw -= TURN_SPEED * dt;
   }
 
   // джойстик микроконтроллера
@@ -1425,7 +1426,7 @@ function updateMovement(dt) {
     vy = Math.sqrt(2 * MOVE.gravity * MOVE.jump);
     onGround = false;
     sound('jump');
-  } else if (jumpRequested && fantasy) {
+  } else if (jumpRequested && (fantasy || world)) {
     skills?.onJump?.(true, tmpV.set(headPos.x, groundY + feet, headPos.z));
   }
   jumpRequested = false;
@@ -1863,7 +1864,7 @@ function attachBracer() {
 // мир замедляется навыком «Ускорение восприятия» и замирает при стоп-кадре; игрок — нет
 function worldDt(dt) {
   if (hitstopT > 0) { hitstopT -= dt; return 0; }
-  return fantasy && skills ? dt * skills.timeScale : dt;
+  return (fantasy || world) && skills ? dt * skills.timeScale : dt;
 }
 
 // опора под ногами: верх платформы или пол острова; сошёл с края — падаешь
@@ -1949,13 +1950,34 @@ const skills = safeCall(skillsMod.createSkills, {
     sound: playSpell, notify, vibrate,
     projectiles: () => (combatOn ? enemies?.projectiles || null : null),
     surfaces: () => ({ radius: FANTASY_ARENA, platforms: fantasyWorld?.platforms || [] }),
+    // открытый мир: земля по рельефу, встать можно на суше на пологом склоне
+    groundAt: world ? world.heightAt : null,
+    canStand: world ? (x, z) => world.heightAt(x, z) > world.seaLevel - 0.5 && world.normalAt(x, z).y > 0.7 : null,
   },
 });
 
+// ПК в открытом мире: навыки по клавишам (в шлеме — жестами, как на арене)
+const SKILL_KEYS = {
+  KeyQ: ['orb', 'Сфера'], KeyE: ['ki', 'Волна ки'], KeyV: ['flash', 'Шаг'], KeyX: ['focus', 'Восприятие'],
+  KeyZ: ['ult', 'Ульта'], KeyG: ['fireball', 'Огненный шар'], KeyT: ['lightning', 'Молния'], KeyH: ['shield', 'Щит'],
+};
+const SKILL_CD_ID = { fireball: 'rune', lightning: 'rune', shield: 'rune' };
+const skillDir = new THREE.Vector3();
+function castSkillKey(code) {
+  const k = SKILL_KEYS[code];
+  if (!k || !skills?.castKey || renderer.xr.isPresenting) return false;
+  camera.getWorldDirection(skillDir);
+  if (!skills.castKey(k[0], { headPos, dir: skillDir, feetY: groundY + feet })) {
+    const left = skills.cooldown?.(SKILL_CD_ID[k[0]] || k[0]) || 0;
+    if (left > 0.05) notify(`${k[1]}: ещё ${left.toFixed(1)} с`, '#9fe7ff');
+  }
+  return true;
+}
+
 const skillCtx = { left: null, right: null, weaponHand: null, headPos, fwd, airborne: false, feetY: 0 };
 function updateFantasy(dt) {
-  if (!fantasy) return;
-  attachBracer();
+  if (!fantasy && !world) return;
+  if (fantasy) attachBracer();
   skillCtx.left = skillCtx.right = null;
   for (const c of controllers) {
     const h = c.userData.src?.handedness;
@@ -1965,7 +1987,7 @@ function updateFantasy(dt) {
   skillCtx.airborne = !onGround;
   skillCtx.feetY = groundY + feet;
   skills?.update?.(dt, skillCtx);
-  updateSupport();
+  if (fantasy) updateSupport(); // платформы острова — только на арене
 }
 
 // наруч: мана, навыки, ульта, оружие, очки, FPS
@@ -2554,6 +2576,9 @@ if (world) {
   board.mesh.visible = false;
   menu.mesh.visible = false;
   setCombat(true); // магическое оружие и существа
+  skills?.setEnabled?.(true);
+  if (skills) skills.freeMana = true; // в мире навыки без маны — только откаты
+  setTimeout(() => notify('Навыки: Q сфера · E волна ки · V шаг · X замедление · Z ульта · G огненный шар · T молния · H щит', '#b49cff'), 2500);
   // название места по-казахски, ниже — по-русски
   world.onTitle = (t) => notify(t.kk + (t.ru && t.ru !== t.kk ? ' · ' + t.ru : ''), '#ffd23f');
   syncGunVisibility();
@@ -2619,7 +2644,7 @@ function frame(_time, _xrFrame, forcedDt, skipRender = false) {
   if (arsenal.current.def.id !== lastWeaponId) { lastWeaponId = arsenal.current.def.id; syncGunVisibility(); aimAmt = 0; }
   if (xr) syncGunVisibility();
   if (xr) updateVrHands(dt);
-  if (xr) updateFantasy(dt);
+  if (xr || world) updateFantasy(dt);
   handleTriggers();
   for (const w of arsenal.list) for (const e of w.drain()) handleWeaponEvent(w, e);
   updateCombat(dt, wdt);
@@ -2627,6 +2652,7 @@ function frame(_time, _xrFrame, forcedDt, skipRender = false) {
   progressionBridge?.update(dt);
   progressionVr?.update(dt);
   updateWorldCreatures(dt);
+  if (world && combatOn) for (const w of arsenal.list) if (w.manaFed && w.def.manaMax) w.mana = w.def.manaMax; // в мире без перезарядки
   if (world) world.combat = Math.min(1, (enemies?.count || 0) / 4);
 
   // полёт пуль

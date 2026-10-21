@@ -74,6 +74,8 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
     damageSphere() { return 0; }, damageRay() { return 0; }, lightning() { return null; },
     hitTest() { return null; }, hitstop() {}, sound() {}, notify() {}, vibrate() {},
     projectiles() { return null; }, surfaces() { return { radius: 11, platforms: [] }; },
+    groundAt: null,   // (x, z) → высота земли; null — ровный пол острова y = 0
+    canStand: null,   // (x, z) → можно ли встать (открытый мир); null — внутри радиуса острова
     ...hooks,
   };
   const fxQuality = quality?.id || 'high';
@@ -88,9 +90,12 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
   let mana = MAX_MANA, ult01 = 0, ultLeft = 0, focusLeft = 0, timeScale = 1;
   let skyUsed = 0;
   let lastCast = ''; // последний сработавший навык (для отладки)
+  let freeMana = false; // открытый мир: навыки без маны, только откаты
+  const ground = (x, z) => (H.groundAt ? H.groundAt(x, z) : 0);
   const trackers = { left: createHandTracker(), right: createHandTracker() };
 
   const spend = (id, cost = SKILLS.find((s) => s.id === id).cost) => {
+    if (freeMana) mana = MAX_MANA;
     if (cd[id] > 0 || mana < cost) {
       if (mana < cost) H.sound('rune-fail');
       return false;
@@ -148,12 +153,14 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
           }
         }
       }
-      if (!hit && tmpA.y >= 0 && tmpC.y < 0) {
-        const t = tmpA.y / (tmpA.y - tmpC.y);
-        flashTarget.set(tmpA.x + (tmpC.x - tmpA.x) * t, 0, tmpA.z + (tmpC.z - tmpA.z) * t);
-        hit = Math.hypot(flashTarget.x, flashTarget.z) <= radius;
+      const gA = ground(tmpA.x, tmpA.z), gC = ground(tmpC.x, tmpC.z);
+      if (!hit && tmpA.y >= gA && tmpC.y < gC) {
+        const t = (tmpA.y - gA) / ((tmpA.y - gA) - (tmpC.y - gC));
+        const fx = tmpA.x + (tmpC.x - tmpA.x) * t, fz = tmpA.z + (tmpC.z - tmpA.z) * t;
+        flashTarget.set(fx, ground(fx, fz), fz);
+        hit = H.canStand ? H.canStand(fx, fz) : Math.hypot(fx, fz) <= radius;
         n++;
-        arcPos[n * 3] = flashTarget.x; arcPos[n * 3 + 1] = 0; arcPos[n * 3 + 2] = flashTarget.z;
+        arcPos[n * 3] = flashTarget.x; arcPos[n * 3 + 1] = flashTarget.y; arcPos[n * 3 + 2] = flashTarget.z;
         break;
       }
       if (hit) { n++; arcPos[n * 3] = flashTarget.x; arcPos[n * 3 + 1] = flashTarget.y; arcPos[n * 3 + 2] = flashTarget.z; break; }
@@ -268,7 +275,7 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
       const hit = len > 0 ? H.hitTest(o.mesh.position, tmpA, len) : null;
       if (hit) { explode(o, hit.point); continue; }
       o.mesh.position.addScaledVector(o.vel, dt);
-      if (o.mesh.position.y <= 0.05 || o.life <= 0) explode(o, o.mesh.position);
+      if (o.mesh.position.y <= ground(o.mesh.position.x, o.mesh.position.z) + 0.05 || o.life <= 0) explode(o, o.mesh.position);
     }
     for (const b of blast) {
       if (!b.mesh.visible) continue;
@@ -360,6 +367,7 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
   }
 
   function fireKi(ctx) {
+    if (freeMana) mana = MAX_MANA;
     if (mana < SKILLS[2].cost) { H.notify('Мало маны для волны ки', '#ff8a6e'); H.sound('rune-fail'); return; }
     const pw = 1 + 2 * (mana / MAX_MANA);
     mana = 0;
@@ -530,6 +538,7 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
       return;
     }
     const cost = RUNE_COST[shape];
+    if (freeMana) mana = MAX_MANA;
     if (mana < cost) { H.notify('Мало маны', '#ff8a6e'); H.sound('rune-fail'); return; }
     mana -= cost;
     cd.rune = SKILLS[6].cooldown;
@@ -608,6 +617,7 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
 
   function update(dt, ctx) {
     lastCtx = ctx;
+    if (freeMana) mana = MAX_MANA;
     for (const k in cd) if (cd[k] > 0) cd[k] = Math.max(0, cd[k] - dt);
     if (!enabled) { timeScale = 1; return; }
     if (ctx.left) trackers.left.update(ctx.left, dt);
@@ -687,6 +697,67 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
     return true;
   }
 
+  // ---------- ПК: навыки по клавишам (в шлеме — жестами) ----------
+  // id: flash | orb | ki | focus | ult | shield | fireball | lightning
+  const keyDir = new THREE.Vector3();
+  function castKey(id, ctx) {
+    if (!enabled || !ctx) return false;
+    if (freeMana) mana = MAX_MANA;
+    const head = ctx.headPos;
+    keyDir.copy(ctx.dir).normalize();
+    switch (id) {
+      case 'flash': {
+        // шаг вперёд по взгляду до 9 м на землю
+        tmpB.set(keyDir.x, 0, keyDir.z);
+        if (tmpB.lengthSq() < 1e-6) return false;
+        tmpB.normalize();
+        let ok = false;
+        for (let d = 9; d >= 3; d -= 1.5) {
+          const x = head.x + tmpB.x * d, z = head.z + tmpB.z * d;
+          if (H.canStand ? H.canStand(x, z) : Math.hypot(x, z) <= (H.surfaces()?.radius || 11)) { flashTarget.set(x, ground(x, z), z); ok = true; break; }
+        }
+        if (!ok) { H.sound('rune-fail'); return false; }
+        flashStep(tmpC.set(head.x, ctx.feetY ?? ground(head.x, head.z), head.z), head);
+        return lastCast === 'flash';
+      }
+      case 'orb': {
+        if (!spend('orb')) return false;
+        tmpA.copy(head).addScaledVector(keyDir, 0.7);
+        tmpA.y -= 0.15;
+        launch(tmpA, tmpB.copy(keyDir).multiplyScalar(18), { radius: 2.6, power: 1.8, color: 0x7fd8ff, fire: false });
+        lastCast = 'orb';
+        H.sound('cast-orb');
+        return true;
+      }
+      case 'ki': {
+        if (cd.ki > 0) { H.sound('rune-fail'); return false; }
+        kiBall.position.copy(head).addScaledVector(keyDir, 0.8);
+        kiBall.position.y -= 0.2;
+        fireKi({ left: null, right: null });
+        return lastCast === 'ki';
+      }
+      case 'focus': {
+        if (focusLeft > 0 || !spend('focus')) return false;
+        focusLeft = FOCUS_TIME;
+        H.sound('slowmo-in');
+        H.notify('УСКОРЕНИЕ ВОСПРИЯТИЯ', '#b49cff');
+        lastCast = 'focus';
+        return true;
+      }
+      case 'ult': {
+        if (ult01 < 1 || ultLeft > 0) { H.notify('Ульта ещё не готова', '#ffc46b'); return false; }
+        ult01 = 0; ultLeft = ULT_TIME; mana = MAX_MANA; dome.visible = true;
+        H.sound('ult'); H.notify('ПРОБУЖДЕНИЕ!', '#ffc46b'); H.hitstop(0.08);
+        lastCast = 'ult';
+        return true;
+      }
+      case 'shield': castRune('circle', camera, ctx); return lastCast === 'rune:circle';
+      case 'fireball': castRune('triangle', camera, ctx); return lastCast === 'rune:triangle';
+      case 'lightning': castRune('zigzag', camera, ctx); return lastCast === 'rune:zigzag';
+    }
+    return false;
+  }
+
   function addCharge(points = 1) {
     if (!enabled || ultLeft > 0) return;
     const was = ult01;
@@ -743,7 +814,10 @@ export function createSkills({ scene, camera, quality, hooks = {} } = {}) {
     get holdingOrb() { return !!orbHand; },
     get kiState() { return kiState; },
     quality: fxQuality,
-    setEnabled, update, onSqueeze, onTrigger, onJump, addCharge, reset, skillStatus,
+    setEnabled, update, onSqueeze, onTrigger, onJump, addCharge, reset, skillStatus, castKey,
+    get freeMana() { return freeMana; },
+    set freeMana(v) { freeMana = !!v; if (freeMana) mana = MAX_MANA; },
+    cooldown(id) { return cd[id] || 0; },
   };
 }
 
