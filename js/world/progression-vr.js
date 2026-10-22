@@ -41,9 +41,12 @@ export function createProgressionVr({ bridge, camera, renderer }) {
   }
   api.toggleShop = () => { if (api.inHub()) { shop = !shop; draw(); } };
   draw(); mesh.visible = false;
+  // игрок может скрыть панель (держать X в шлеме); выбор запоминается
+  const HIDE_KEY = 'vr-atu-hud-hidden';
+  let hidden = false; try { hidden = localStorage.getItem(HIDE_KEY) === '1'; } catch {}
   return {
     mesh, targets: [mesh],
-    update(dt) { mesh.visible = renderer.xr.isPresenting; if (shop && !api.inHub()) shop = false; if ((timer -= dt) <= 0) { timer = 0.1; draw(); } },
+    update(dt) { mesh.visible = renderer.xr.isPresenting && !hidden; if (shop && !api.inHub()) shop = false; if ((timer -= dt) <= 0) { timer = 0.1; draw(); } },
     select(controller) {
       if (!mesh.visible) return false;
       camera.updateWorldMatrix(true, true); controller.updateWorldMatrix(true, false);
@@ -54,7 +57,10 @@ export function createProgressionVr({ bridge, camera, renderer }) {
       const b = buttons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
       b?.action(); draw(); return true;
     },
-    get debug() { return { visible: mesh.visible, shop, page, buttons: buttons.length, level: api.prog.level, hp: bridge.state.hp, texture: texture.uuid }; },
+    get hidden() { return hidden; },
+    /** Скрыть/показать панель; возвращает true, если теперь скрыта. */
+    toggleHidden() { hidden = !hidden; if (hidden) shop = false; try { localStorage.setItem(HIDE_KEY, hidden ? '1' : '0'); } catch {} mesh.visible = renderer.xr.isPresenting && !hidden; return hidden; },
+    get debug() { return { visible: mesh.visible, hidden, shop, page, buttons: buttons.length, level: api.prog.level, hp: bridge.state.hp, texture: texture.uuid }; },
     dispose() { mesh.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); texture.dispose(); delete api.toggleShop; },
   };
 }

@@ -1248,7 +1248,18 @@ function pollVrButtons() {
       }
       if (pressed(3)) arsenal.current.toggleMode();
     } else if (src.handedness === 'left') {
-      if (pressed(4)) vrCrouch = !vrCrouch;
+      // X: коротко — присед, держать 0,6 с — скрыть/показать окно уровня
+      const x = !!b[4]?.pressed;
+      if (x && !prev[4]) c.userData.xDown = performance.now();
+      if (x && c.userData.xDown && performance.now() - c.userData.xDown > 600) {
+        c.userData.xDown = 0;
+        if (progressionVr?.toggleHidden) {
+          const hid = progressionVr.toggleHidden();
+          notify(hid ? 'Окно уровня скрыто · держи X — показать' : 'Окно уровня показано', '#9fe7ff');
+          vibrate(c, 0.3, 40);
+        }
+      }
+      if (!x && prev[4] && c.userData.xDown) { c.userData.xDown = 0; vrCrouch = !vrCrouch; }
       // Y: коротко — предыдущее оружие (или следующая страница справки), держать 0,6 с — справка
       const y = !!b[5]?.pressed;
       if (y && !prev[5]) c.userData.yDown = performance.now();
