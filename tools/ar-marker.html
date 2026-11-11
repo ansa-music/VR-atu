@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATU AR — генератор маркера</title>
+  <style>
+    body { margin: 0; padding: 24px; background: #101718; color: #dedfd6; font: 15px/1.6 system-ui; }
+    canvas { width: min(512px, 100%); height: auto; border-radius: 8px; display: block; margin: 16px 0; }
+    a.btn { display: inline-block; margin-right: 12px; padding: 10px 14px; border: 1px solid #ffffff33; border-radius: 7px; color: #fff; text-decoration: none; }
+    a.btn[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+  </style>
+  <script type="importmap">
+    { "imports": { "mindar-image": "../vendor/mindar/mindar-image.prod.js" } }
+  </script>
+</head>
+<body>
+  <h1>Маркер для AR-страницы</h1>
+  <p>Страница рисует маркер и компилирует его в формат MindAR. Скачайте оба файла и положите в <code>assets/ar/</code> как <code>marker.png</code> и <code>marker.mind</code>.</p>
+  <canvas id="c" width="1024" height="1024"></canvas>
+  <p id="status" role="status">Компиляция…</p>
+  <a class="btn" id="dl-png" download="marker.png">Скачать marker.png</a>
+  <a class="btn" id="dl-mind" download="marker.mind" aria-disabled="true">Скачать marker.mind</a>
+
+  <script>
+    // ?bg — компиляция в фоновой вкладке: там браузер замораживает requestAnimationFrame.
+    if (new URLSearchParams(location.search).has('bg')) window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 0);
+  </script>
+  <script type="module">
+    import { Compiler } from 'mindar-image';
+
+    const canvas = document.getElementById('c');
+    const g = canvas.getContext('2d');
+    const S = 1024;
+
+    // Детерминированный генератор: маркер одинаковый при каждом запуске.
+    let seed = 20261111;
+    const rnd = () => {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = (a) => a[Math.floor(rnd() * a.length)];
+    const COLORS = ['#f4e9c1', '#19d3e6', '#8b5cf6', '#e0a83a', '#ffffff', '#ef6f4a', '#2f3b52'];
+
+    g.fillStyle = '#0d1220';
+    g.fillRect(0, 0, S, S);
+
+    // Мозаика из осколков — много углов и контраста, чтобы трекеру было за что зацепиться.
+    const N = 16, cell = S / N;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const cx = (x + .5) * cell, cy = (y + .5) * cell;
+      const d = Math.hypot(cx - S / 2, cy - S / 2);
+      if (d < 250) continue;                       // центр оставляем под эмблему
+      g.save();
+      g.translate(cx, cy);
+      g.rotate(rnd() * Math.PI);
+      g.fillStyle = pick(COLORS);
+      const k = Math.floor(rnd() * 4), r = cell * (.28 + rnd() * .2);
+      g.beginPath();
+      if (k === 0) { g.moveTo(-r, r); g.lineTo(0, -r); g.lineTo(r, r); g.closePath(); g.fill(); }
+      else if (k === 1) { g.fillRect(-r, -r * .45, r * 2, r * .9); }
+      else if (k === 2) { g.moveTo(0, -r); g.lineTo(r * .6, 0); g.lineTo(0, r); g.lineTo(-r * .6, 0); g.closePath(); g.fill(); }
+      else { g.lineWidth = 7; g.strokeStyle = g.fillStyle; g.moveTo(-r, -r); g.lineTo(r, r); g.moveTo(-r, r); g.lineTo(r * .2, -r * .2); g.stroke(); }
+      g.restore();
+    }
+
+    // Эмблема: кольца, руническая «А» и надпись ATU.
+    g.fillStyle = '#0d1220';
+    g.beginPath(); g.arc(S / 2, S / 2, 262, 0, Math.PI * 2); g.fill();
+    g.lineWidth = 14; g.strokeStyle = '#e0a83a';
+    g.beginPath(); g.arc(S / 2, S / 2, 250, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = 6; g.strokeStyle = '#8b5cf6';
+    g.beginPath(); g.arc(S / 2, S / 2, 226, 0, Math.PI * 2); g.stroke();
+    for (let i = 0; i < 24; i++) {
+      const a = i / 24 * Math.PI * 2;
+      g.save(); g.translate(S / 2 + Math.cos(a) * 238, S / 2 + Math.sin(a) * 238); g.rotate(a);
+      g.fillStyle = i % 3 ? '#19d3e6' : '#f4e9c1';
+      g.fillRect(-5, -9, 10, 18); g.restore();
+    }
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.strokeStyle = '#19d3e6'; g.lineWidth = 18;
+    g.beginPath();
+    g.moveTo(S / 2 - 92, S / 2 + 50); g.lineTo(S / 2, S / 2 - 178); g.lineTo(S / 2 + 92, S / 2 + 50);
+    g.moveTo(S / 2 - 56, S / 2 - 34); g.lineTo(S / 2 + 56, S / 2 - 34);
+    g.moveTo(S / 2 - 30, S / 2 - 96); g.lineTo(S / 2 + 74, S / 2 + 6);
+    g.stroke();
+    g.fillStyle = '#f7d154';
+    g.font = '900 104px "Arial Black", Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('A T U', S / 2, S / 2 + 138);
+    g.fillStyle = '#f4e9c1';
+    g.font = '700 26px Arial, sans-serif';
+    g.fillText('ACADEMY · AR', S / 2, S / 2 + 204);
+
+    // Рамка с несимметричными углами: по ним видно, где у маркера верх.
+    g.lineWidth = 20; g.strokeStyle = '#f4e9c1'; g.strokeRect(10, 10, S - 20, S - 20);
+    g.fillStyle = '#ef6f4a'; g.fillRect(20, 20, 84, 84);
+    g.fillStyle = '#19d3e6'; g.fillRect(S - 104, 20, 84, 42);
+    g.fillStyle = '#8b5cf6'; g.beginPath(); g.moveTo(20, S - 20); g.lineTo(20, S - 110); g.lineTo(110, S - 20); g.fill();
+
+    const pngUrl = canvas.toDataURL('image/png');
+    document.getElementById('dl-png').href = pngUrl;
+
+    const status = document.getElementById('status');
+    const img = new Image();
+    img.src = pngUrl;
+    await img.decode();
+    const compiler = new Compiler();
+    await compiler.compileImageTargets([img], (p) => { status.textContent = `Компиляция… ${p.toFixed(0)}%`; });
+    const mind = await compiler.exportData();
+    const mindBlob = new Blob([mind]);
+    const dl = document.getElementById('dl-mind');
+    dl.href = URL.createObjectURL(mindBlob);
+    dl.removeAttribute('aria-disabled');
+    status.textContent = `Готово: marker.mind — ${(mindBlob.size / 1024).toFixed(0)} КБ`;
+    window.arMarker = { canvas, mindBlob };
+  </script>
+</body>
+</html>

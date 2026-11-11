@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#101718">
+  <meta name="color-scheme" content="dark">
+  <title>ATU — AR-бестиарий</title>
+  <style>
+    :root { --bg: #101718; --panel: #192123ee; --line: #ffffff22; --text: #dedfd6; --muted: #8e9b94; --accent: #d6f5ba; --cyan: #19d3e6; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; overflow: hidden; overscroll-behavior: none; }
+    #stage { position: fixed; inset: 0; overflow: hidden; touch-action: none; }
+    #stage video { object-fit: cover; }
+    button, a.btn { font: 600 14px system-ui, sans-serif; color: var(--text); background: #ffffff0d; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 46px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-align: center; -webkit-tap-highlight-color: transparent; }
+    button:active, a.btn:active { background: #ffffff22; }
+    button.primary { background: var(--accent); color: #14251d; border-color: transparent; }
+    button[aria-pressed="true"] { border-color: var(--cyan); color: #fff; }
+
+    #start { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px 16px; overflow: auto; background: radial-gradient(120% 90% at 50% 0, #233d39, var(--bg) 62%); }
+    #start[hidden] { display: none; }
+    .card { width: min(460px, 100%); }
+    .eyebrow { color: var(--muted); font: 600 11px system-ui; letter-spacing: .16em; }
+    h1 { margin: 8px 0 8px; font: 650 30px/1.1 system-ui; letter-spacing: -.03em; }
+    .lead { margin: 0 0 16px; color: #b9c2b7; }
+    ol { margin: 0 0 18px; padding-left: 20px; color: #b9c2b7; }
+    ol li { margin: 5px 0; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .row .wide { grid-column: 1 / -1; }
+    #start-note { min-height: 22px; margin: 12px 0 0; color: #f0b98a; font-size: 13px; }
+    .marker-thumb { float: right; width: 96px; height: 96px; margin: 0 0 8px 14px; border-radius: 8px; border: 1px solid var(--line); }
+
+    #hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); }
+    #hud[hidden] { display: none; }
+    #status { align-self: center; max-width: 100%; padding: 9px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font: 600 13px system-ui; text-align: center; }
+    #status.found { border-color: var(--cyan); color: #fff; }
+    #info { align-self: center; margin-bottom: 10px; max-width: 420px; padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; text-align: center; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
+    #info.show { opacity: 1; transform: none; }
+    #info strong { display: block; font-size: 15px; color: #fff; }
+    #bar { pointer-events: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: min(560px, 100%); }
+    #bar button { padding: 10px 6px; font-size: 12px; background: var(--panel); }
+    #scan { position: fixed; left: 50%; top: 50%; width: min(64vw, 64vh); aspect-ratio: 1; transform: translate(-50%, -50%); border: 2px dashed #ffffff66; border-radius: 18px; z-index: 5; pointer-events: none; animation: pulse 1.6s ease-in-out infinite; }
+    #scan[hidden] { display: none; }
+    @keyframes pulse { 50% { opacity: .35; transform: translate(-50%, -50%) scale(.96); } }
+    @media (prefers-reduced-motion: reduce) { #scan { animation: none; } }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/addons/",
+        "mindar-image-three": "./vendor/mindar/mindar-image-three.prod.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="scan" hidden></div>
+
+  <div id="start">
+    <div class="card">
+      <span class="eyebrow">ACADEMY · WEBAR</span>
+      <h1>AR-бестиарий ATU</h1>
+      <img class="marker-thumb" src="assets/ar/marker.png" alt="Маркер ATU">
+      <p class="lead">Наведи камеру телефона на эмблему Академии — и существа из игры появятся прямо перед тобой.</p>
+      <ol>
+        <li>Открой маркер на другом экране или распечатай его.</li>
+        <li>Нажми «Запустить AR» и разреши доступ к камере.</li>
+        <li>Коснись существа, подойди ближе, смени модель.</li>
+      </ol>
+      <div class="row">
+        <button class="primary wide" id="btn-ar" type="button">Запустить AR</button>
+        <a class="btn" href="assets/ar/marker.png" target="_blank" rel="noopener">Показать маркер</a>
+        <button id="btn-demo" type="button">Демо без камеры</button>
+        <a class="btn wide" href="./">← В игру</a>
+      </div>
+      <p id="start-note" role="status"></p>
+    </div>
+  </div>
+
+  <div id="hud" hidden>
+    <div id="status" role="status">Загрузка…</div>
+    <div style="display: flex; flex-direction: column; align-items: center;">
+      <div id="info"><strong id="info-name"></strong><span id="info-text"></span></div>
+      <div id="bar">
+        <button id="btn-next" type="button">Существо ▸</button>
+        <button id="btn-pose" type="button">Стена</button>
+        <button id="btn-sound" type="button" aria-pressed="true">Звук</button>
+        <button id="btn-game" type="button">В игру ↗</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // Модели из игры (assets/models/*.glb). yaw — разворот лицом к зрителю.
+    const CREATURES = [
+      { file: 'guardian.glb', name: 'Страж Академии', text: 'Каменный голем. Охраняет вход на Арену магов.' },
+      { file: 'boss.glb', name: 'Колосс Игнарок', text: 'Босс кальдеры. Слабое место — ядро в груди.' },
+      { file: 'fairy.glb', name: 'Фея', text: 'Быстрая летунья. Попасть по ней труднее всего.' },
+      { file: 'skull.glb', name: 'Череп-страж', text: 'Парит над землёй и не сводит с тебя глаз.' },
+      { file: 'eye.glb', name: 'Око', text: 'Крылатый наблюдатель. Видит сквозь туман.' },
+    ];
+    const NEAR = 2.3;   // ближе этого расстояния (в ширинах маркера) существо «просыпается»
+    const FAR = 2.9;    // дальше — снова засыпает (гистерезис, чтобы не мигало)
+
+    const $ = (id) => document.getElementById(id);
+    const stage = $('stage'), statusEl = $('status'), info = $('info');
+    const demo = new URLSearchParams(location.search).has('demo');
+
+    // ---------- Звук: короткие синтезированные сигналы (Web Audio, без файлов) ----------
+    let actx = null, soundOn = true;
+    function tone(freq, t0, dur, type = 'sine', gain = .16, slideTo = 0) {
+      if (!actx || !soundOn) return;
+      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + t0;
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + .015);
+      g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + .02);
+    }
+    const sfx = {
+      found: () => { tone(392, 0, .25, 'triangle'); tone(587, .09, .25, 'triangle'); tone(784, .18, .4, 'triangle'); },
+      lost: () => tone(330, 0, .3, 'sine', .1, 165),
+      tap: () => { tone(880, 0, .12, 'square', .07); tone(1175, .07, .16, 'square', .07); tone(1568, .14, .3, 'triangle', .12); },
+      next: () => { tone(523, 0, .1, 'triangle'); tone(659, .08, .18, 'triangle'); },
+      wake: () => { tone(110, 0, .7, 'sawtooth', .1, 220); tone(165, .1, .6, 'sawtooth', .07, 330); },
+      sleep: () => tone(220, 0, .4, 'sine', .08, 110),
+    };
+
+    // ---------- Содержимое якоря: единица длины = ширина маркера ----------
+    const content = new THREE.Group();      // всё, что привязано к маркеру
+    const poseRoot = new THREE.Group();     // «стена» (в плоскости маркера) или «стол» (стоит на маркере)
+    const spinner = new THREE.Group();      // вращение и прыжок по касанию
+    content.add(poseRoot); poseRoot.add(spinner);
+    content.visible = false;
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(.44, .5, 48),
+      new THREE.MeshBasicMaterial({ color: 0x19d3e6, transparent: true, opacity: .85, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    const burst = new THREE.Mesh(
+      new THREE.RingGeometry(.9, 1, 48),
+      new THREE.MeshBasicMaterial({ color: 0xf7d154, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    content.add(ring, burst);
+
+    const sparkGeo = new THREE.BufferGeometry();
+    const SPARKS = 36, sparkPos = new Float32Array(SPARKS * 3), sparkVel = new Float32Array(SPARKS * 3);
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+    const sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: 0xf7d154, size: .05, transparent: true, opacity: 0, depthWrite: false }));
+    sparks.frustumCulled = false;
+    content.add(sparks);
+
+    const lights = new THREE.Group();
+    lights.add(new THREE.HemisphereLight(0xffffff, 0x35405a, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+    sun.position.set(.6, 1, 1.4);
+    lights.add(sun);
+
+    const loader = new GLTFLoader();
+    const cache = new Map();
+    let current = 0, model = null, tablePose = false;
+
+    async function loadCreature(i) {
+      const c = CREATURES[i];
+      if (!cache.has(c.file)) {
+        const gltf = await loader.loadAsync(`assets/models/${c.file}`);
+        const obj = gltf.scene;
+        // Нормализация: наибольший размер = 0,9 ширины маркера, низ модели на нуле, центр по X/Z.
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+        const k = .9 / Math.max(size.x, size.y, size.z);
+        obj.position.set(-mid.x * k, -box.min.y * k, -mid.z * k);
+        obj.scale.setScalar(k);
+        const holder = new THREE.Group();
+        holder.add(obj);
+        holder.rotation.y = Math.PI;            // лицо у моделей игры смотрит в −Z, разворачиваем к зрителю
+        holder.userData.height = size.y * k;
+        holder.traverse((m) => {
+          if (m.isMesh) { m.material = m.material.clone(); m.userData.baseEmissive = m.material.emissive ? m.material.emissive.clone() : null; }
+        });
+        cache.set(c.file, holder);
+      }
+      return cache.get(c.file);
+    }
+
+    async function showCreature(i, announce = true) {
+      current = (i + CREATURES.length) % CREATURES.length;
+      const next = await loadCreature(current);
+      if (model) spinner.remove(model);
+      model = next;
+      spinner.add(model);
+      applyPose();
+      anim.appear = 0;
+      const c = CREATURES[current];
+      $('info-name').textContent = c.name;
+      $('info-text').textContent = c.text;
+      if (announce) { info.classList.add('show'); sfx.next(); if (state.awake) setStatus(`${c.name} заметил тебя!`, true); }
+      state.creature = c.name;
+    }
+
+    function applyPose() {
+      // «Стена»: существо стоит в плоскости маркера (маркер на экране или на стене).
+      // «Стол»: существо стоит на маркере, лежащем горизонтально.
+      const h = model ? model.userData.height : .9;
+      if (tablePose) { poseRoot.rotation.x = Math.PI / 2; poseRoot.position.set(0, 0, 0); }
+      else { poseRoot.rotation.x = 0; poseRoot.position.set(0, -h / 2, .25); }
+      $('btn-pose').textContent = tablePose ? 'Стол' : 'Стена';
+      state.pose = tablePose ? 'table' : 'wall';
+    }
+
+    // ---------- Action Script: реакции на действия пользователя ----------
+    const anim = { appear: 1, spin: 1, burst: 1, awake: 0 };
+    const state = { mode: demo ? 'demo' : 'ar', found: false, awake: false, taps: 0, distance: null, creature: '', pose: 'wall', error: null };
+    window.arLab = state;
+
+    function onTapModel() {                     // касание модели → звук + вращение + искры
+      state.taps++;
+      anim.spin = 0; anim.burst = 0;
+      for (let i = 0; i < SPARKS; i++) {
+        const a = Math.random() * Math.PI * 2, s = .5 + Math.random() * .9;
+        sparkPos.set([0, 0, .3], i * 3);
+        sparkVel.set([Math.cos(a) * s, Math.sin(a) * s, .3 + Math.random() * .8], i * 3);
+      }
+      sfx.tap();
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+
+    function setAwake(on) {                     // приближение камеры → существо «просыпается»
+      if (state.awake === on) return;
+      state.awake = on;
+      (on ? sfx.wake : sfx.sleep)();
+      setStatus(on ? `${CREATURES[current].name} заметил тебя!` : 'Подойди ближе или коснись существа', true);
+    }
+
+    function setFound(on) {                     // маркер найден / потерян
+      state.found = on;
+      content.visible = on;
+      $('scan').hidden = on || demo;
+      if (on) { anim.appear = 0; sfx.found(); info.classList.add('show'); setStatus('Маркер найден — коснись существа', true); }
+      else { sfx.lost(); info.classList.remove('show'); state.awake = false; setStatus('Наведи камеру на маркер ATU', false); }
+    }
+
+    function setStatus(text, found) { statusEl.textContent = text; statusEl.classList.toggle('found', !!found); }
+
+    $('btn-next').onclick = () => showCreature(current + 1);
+    $('btn-pose').onclick = () => { tablePose = !tablePose; applyPose(); sfx.next(); };
+    $('btn-sound').onclick = (e) => { soundOn = !soundOn; e.currentTarget.setAttribute('aria-pressed', String(soundOn)); e.currentTarget.textContent = soundOn ? 'Звук' : 'Без звука'; };
+    $('btn-game').onclick = () => { stop(); location.href = './'; };   // переход на другую страницу — в игру
+
+    // ---------- Запуск ----------
+    let renderer, scene, camera, mindar = null, running = false;
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    const clock = new THREE.Clock();
+    const P = new THREE.Vector3(), Q = new THREE.Quaternion(), S = new THREE.Vector3();
+    const orbit = { yaw: .5, pitch: .25, dist: 3.4, drag: null, moved: 0 };
+
+    function unlockAudio() {
+      try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch { actx = null; }
+    }
+
+    async function startAR() {
+      const note = $('start-note');
+      unlockAudio();
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        note.textContent = 'Камера доступна только по HTTPS. Открой страницу по ссылке GitHub Pages или включи демо.';
+        return;
+      }
+      note.textContent = 'Запрашиваем камеру…';
+      try {
+        const probe = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        probe.getTracks().forEach((t) => t.stop());
+      } catch (err) {
+        state.error = String(err && err.name || err);
+        note.textContent = 'Нет доступа к камере. Разреши камеру в настройках браузера или включи демо.';
+        return;
+      }
+      note.textContent = 'Загружаем трекер…';
+      try {
+        const { MindARThree } = await import('mindar-image-three');
+        mindar = new MindARThree({
+          container: stage, imageTargetSrc: 'assets/ar/marker.mind',
+          uiLoading: 'no', uiScanning: 'no', uiError: 'no', filterMinCF: .0005, filterBeta: .01,
+        });
+        ({ renderer, scene, camera } = mindar);
+        const anchor = mindar.addAnchor(0);
+        anchor.group.add(content);
+        anchor.onTargetFound = () => setFound(true);
+        anchor.onTargetLost = () => setFound(false);
+        scene.add(lights);
+        await showCreature(0, false);
+        await mindar.start();
+        begin(() => {
+          if (!state.found) return;
+          anchor.group.matrix.decompose(P, Q, S);
+          updateDistance(P.length() / (S.x || 1));
+        });
+        $('scan').hidden = false;
+        setStatus('Наведи камеру на маркер ATU', false);
+      } catch (err) {
+        console.error(err);
+        state.error = String(err && err.message || err);
+        note.textContent = 'Не удалось запустить AR на этом устройстве. Попробуй демо без камеры.';
+      }
+    }
+
+    async function startDemo() {
+      unlockAudio();
+      state.mode = 'demo';
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      stage.appendChild(renderer.domElement);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(50, 1, .05, 50);
+      scene.add(lights, content);
+      // В демо маркер лежит под существом, как распечатанный лист.
+      const tex = await new THREE.TextureLoader().loadAsync('assets/ar/marker.png');
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex }));
+      sheet.position.z = -.002;
+      content.add(sheet);
+      const fit = () => {
+        renderer.setSize(innerWidth, innerHeight);
+        camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+      };
+      addEventListener('resize', fit); fit();
+      await showCreature(0, false);
+      begin(() => {
+        const cp = Math.cos(orbit.pitch);
+        camera.position.set(Math.sin(orbit.yaw) * cp * orbit.dist, Math.sin(orbit.pitch) * orbit.dist - .1, Math.cos(orbit.yaw) * cp * orbit.dist);
+        camera.lookAt(0, .1, 0);
+        updateDistance(orbit.dist);
+      });
+      setFound(true);
+      setStatus('Демо: тяни — вращать, колесо или щипок — ближе', true);
+    }
+
+    function updateDistance(d) {
+      state.distance = +d.toFixed(2);
+      if (!state.awake && d < NEAR) setAwake(true);
+      else if (state.awake && d > FAR) setAwake(false);
+    }
+
+    function begin(perFrame) {
+      $('start').hidden = true; $('hud').hidden = false;
+      running = true; clock.start();
+      renderer.setAnimationLoop(() => { const dt = Math.min(clock.getDelta(), .05); perFrame(); animate(dt); renderer.render(scene, camera); });
+      state.step = (n = 1, dt = 1 / 60) => { for (let i = 0; i < n; i++) { perFrame(); animate(dt); } renderer.render(scene, camera); };
+    }
+
+    function stop() {
+      running = false;
+      try { renderer?.setAnimationLoop(null); mindar?.stop(); } catch { /* уже остановлен */ }
+    }
+    addEventListener('pagehide', stop);
+
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    let time = 0;
+    function animate(dt) {
+      time += dt;
+      anim.appear = Math.min(1, anim.appear + dt / .6);
+      anim.spin = Math.min(1, anim.spin + dt / 1.1);
+      anim.burst = Math.min(1, anim.burst + dt / .9);
+      anim.awake += ((state.awake ? 1 : 0) - anim.awake) * Math.min(1, dt * 5);
+
+      const a = ease(anim.appear), w = anim.awake;
+      spinner.scale.setScalar(a * (1 + w * .22));
+      spinner.rotation.y = ease(anim.spin) * Math.PI * 2 + Math.sin(time * .9) * .18;
+      spinner.position.y = Math.sin(anim.spin * Math.PI) * .22 + Math.sin(time * 2) * .015 + w * Math.abs(Math.sin(time * 6)) * .03;
+
+      if (model) model.traverse((m) => {     // «пробуждение» — подсветка материала
+        if (m.isMesh && m.userData.baseEmissive) m.material.emissive.copy(m.userData.baseEmissive).lerp(GLOW, w * (.35 + .15 * Math.sin(time * 6)));
+      });
+
+      ring.rotation.z = time * .6;
+      ring.scale.setScalar(a * (1 + w * .15));
+      ring.material.color.set(w > .5 ? 0xef6f4a : 0x19d3e6);
+      burst.scale.setScalar(.3 + anim.burst * 1.2);
+      burst.material.opacity = (1 - anim.burst) * .8;
+      sparks.material.opacity = 1 - anim.burst;
+      if (anim.burst < 1) {
+        for (let i = 0; i < SPARKS * 3; i++) sparkPos[i] += sparkVel[i] * dt;
+        sparkGeo.attributes.position.needsUpdate = true;
+      }
+    }
+    const GLOW = new THREE.Color(0xff5a2a);
+
+    // Касания: в AR — нажатие по модели; в демо ещё вращение и приближение.
+    const pointers = new Map(); let pinch = 0;
+    stage.addEventListener('pointerdown', (e) => {
+      if (!running) return;
+      pointers.set(e.pointerId, e);
+      orbit.drag = { x: e.clientX, y: e.clientY }; orbit.moved = 0;
+      if (pointers.size === 2) { const [p, q] = [...pointers.values()]; pinch = Math.hypot(p.clientX - q.clientX, p.clientY - q.clientY); }
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, e);
+      if (state.mode !== 'demo') {            // в AR палец только нажимает: считаем сдвиг от точки касания
+        if (orbit.drag) orbit.moved = Math.max(orbit.moved, Math.hypot(e.clientX - orbit.drag.x, e.clientY - orbit.drag.y));
+        return;
+      }
+      if (pointers.size === 2) {
+        const [p, q] = [...pointers.values()], d = Math.hypot(p.clientX - q.clientX, p.clientY - q.clientY);
+        if (pinch) orbit.dist = THREE.MathUtils.clamp(orbit.dist * pinch / d, 1.2, 6);
+        pinch = d; orbit.moved = 99;
+      } else if (orbit.drag) {
+        const dx = e.clientX - orbit.drag.x, dy = e.clientY - orbit.drag.y;
+        orbit.drag = { x: e.clientX, y: e.clientY }; orbit.moved += Math.abs(dx) + Math.abs(dy);
+        orbit.yaw -= dx * .008; orbit.pitch = THREE.MathUtils.clamp(orbit.pitch + dy * .006, -.3, 1.3);
+      }
+    });
+    const release = (e) => {
+      if (!pointers.delete(e.pointerId)) return;
+      pinch = 0;
+      if (orbit.moved < 10 && state.found && model) {
+        ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+        ray.setFromCamera(ndc, camera);
+        if (ray.intersectObject(model, true).length) onTapModel();
+      }
+      orbit.drag = null;
+    };
+    stage.addEventListener('pointerup', release);
+    stage.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); orbit.drag = null; });
+    stage.addEventListener('wheel', (e) => {
+      if (state.mode === 'demo') { orbit.dist = THREE.MathUtils.clamp(orbit.dist * (1 + Math.sign(e.deltaY) * .08), 1.2, 6); e.preventDefault(); }
+    }, { passive: false });
+
+    $('btn-ar').onclick = startAR;
+    $('btn-demo').onclick = startDemo;
+    if (demo) $('start-note').textContent = 'Режим демо: камера не нужна.';
+  </script>
+</body>
+</html>
