@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Ғарыш порталы — AR зертханалық жұмыс 12</title>
+
+  <!-- Реті маңызды: алдымен A-Frame, содан кейін AR.js -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    /* AR.js body өлшемін өзі орнатады (экраннан кеңірек) — артығын қиып, айналдыруға тыйым саламыз.
+       body-ге position бермеңіз: AR.js бейнені экранға қатысты орналастырады. */
+    html { overflow: hidden; overflow: clip; }
+    body { margin: 0; overflow: hidden; font-family: system-ui, "Segoe UI", Roboto, sans-serif; }
+
+    /* Жоғарыдағы күй жолағы (markerFound / markerLost) */
+    #status {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 20;
+      max-width: calc(100% - 32px); padding: 8px 16px; border-radius: 999px;
+      background: rgba(10, 8, 30, 0.72); color: #fff; font-size: 15px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+      box-shadow: 0 0 0 1px rgba(179, 136, 255, 0.5), 0 4px 18px rgba(0, 0, 0, 0.35);
+    }
+    /* Төменгі сол жақтағы ағымдағы әлем белгісі */
+    #world-chip {
+      position: fixed; left: 16px; bottom: 16px; z-index: 20; padding: 6px 12px; border-radius: 10px;
+      background: rgba(10, 8, 30, 0.72); color: #fff; font-size: 14px; pointer-events: none;
+    }
+    /* Бастапқы экран */
+    #intro {
+      position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+      padding: 16px; background: radial-gradient(circle at 50% 30%, #2a1065 0%, #07051a 70%); color: #fff;
+    }
+    #intro .card { max-width: 420px; }
+    #intro h1 { margin: 0 0 4px; font-size: 30px; }
+    #intro .sub { margin: 0 0 18px; opacity: 0.7; font-size: 14px; }
+    #intro ol { margin: 0 0 22px; padding-left: 22px; line-height: 1.55; font-size: 15px; }
+    #intro button {
+      width: 100%; padding: 14px; border: 0; border-radius: 14px; cursor: pointer;
+      background: linear-gradient(90deg, #7c4dff, #00bcd4); color: #fff; font-size: 18px; font-weight: 700;
+    }
+    #intro .note { margin-top: 10px; text-align: center; font-size: 13px; opacity: 0.6; }
+  </style>
+
+  <script>
+    /* =====================================================================
+       1. ДЕРЕКТЕР: екі әлемнің баптаулары
+       ===================================================================== */
+    const WORLDS = {
+      space: {
+        name: 'Ғарыш', icon: '🪐', title: 'Ғарыш порталы',
+        rim: '#b388ff', top: '#2a1065', bottom: '#020008',
+        lines: [
+          'Қағаздағы маркер — басқа әлемге есік.',
+          'Ішінде: жұлдыздар мен сақиналы планета.',
+          'Ұшатын тәрелке — glTF модель.',
+          '👆 Тәрелкені түртіп көріңіз!',
+          '⚡ Найзағай-маркер әлемді ауыстырады.'
+        ]
+      },
+      ocean: {
+        name: 'Мұхит', icon: '🌊', title: 'Мұхит порталы',
+        rim: '#4dd0e1', top: '#38b6d8', bottom: '#022338',
+        lines: [
+          'Порталдың ар жағында — терең мұхит.',
+          'Балықтар (glTF), көпіршіктер, балдырлар.',
+          'Бір балық порталдан секіріп шығады!',
+          '👆 Балықты түртіп көріңіз!',
+          '⚡ Найзағай-маркер әлемді ауыстырады.'
+        ]
+      }
+    };
+    const DEFAULT_STATUS = '🔑 Кілт-маркерді камераға көрсетіңіз';
+
+    /* =====================================================================
+       2. КӨМЕКШІЛЕР: интерфейс, дыбыс, әлемді ауыстыру
+       ===================================================================== */
+    const UI = {
+      status(text) { document.getElementById('status').textContent = text; }
+    };
+
+    // Дыбыстар файлсыз, Web Audio API арқылы синтезделеді
+    const Sound = {
+      ctx: null,
+      unlock() {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!this.ctx && AC) this.ctx = new AC();
+        if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+      },
+      tone(freq, start, dur, type = 'sine', vol = 0.2, freqEnd = null) {
+        const c = this.ctx, o = c.createOscillator(), g = c.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, start);
+        if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, start + dur);
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.exponentialRampToValueAtTime(vol, start + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        o.connect(g).connect(c.destination);
+        o.start(start); o.stop(start + dur + 0.05);
+      },
+      portal() {  // «ву-у-ух» + жұлдызды жарқыл
+        const c = this.ctx; if (!c) return;
+        const t = c.currentTime, len = Math.floor(c.sampleRate * 1.2);
+        const buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+        src.buffer = buf; f.type = 'bandpass'; f.Q.value = 4;
+        f.frequency.setValueAtTime(150, t); f.frequency.exponentialRampToValueAtTime(2500, t + 1.0);
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.25);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+        src.connect(f).connect(g).connect(c.destination); src.start(t); src.stop(t + 1.2);
+        [880, 1320, 1760].forEach((fr, i) => this.tone(fr, t + 0.5 + i * 0.12, 0.3, 'sine', 0.12));
+      },
+      ufo()    { if (this.ctx) this.tone(400, this.ctx.currentTime, 0.35, 'triangle', 0.2, 1400); },
+      bloop()  { if (this.ctx) this.tone(700, this.ctx.currentTime, 0.18, 'sine', 0.25, 180); },
+      switch() { if (this.ctx) { const t = this.ctx.currentTime; this.tone(523, t, 0.15, 'square', 0.08); this.tone(784, t + 0.12, 0.25, 'square', 0.08); } }
+    };
+
+    const Worlds = {
+      current: 'space',
+      toggle() { this.set(this.current === 'space' ? 'ocean' : 'space'); },
+      set(key) {
+        this.current = key;
+        const w = WORLDS[key], next = WORLDS[key === 'space' ? 'ocean' : 'space'];
+        document.querySelector('#world-space').setAttribute('visible', key === 'space');
+        document.querySelector('#world-ocean').setAttribute('visible', key === 'ocean');
+        document.querySelectorAll('.rim-edge').forEach(e => e.setAttribute('material', 'color', w.rim));
+        document.querySelector('#shaft').setAttribute('gradient-walls', { top: w.top, bottom: w.bottom });
+        document.querySelector('#switch-gem').setAttribute('material', 'color', next.rim);
+        document.getElementById('world-chip').textContent = `${w.icon} Әлем: ${w.name}`;
+        document.querySelector('a-scene').emit('world-changed', { world: key });
+      }
+    };
+
+    // Нысан шынымен көрініп тұр ма (маркер мен әлем жасырылмаған ба)
+    function isReallyVisible(el) {
+      for (let o = el.object3D; o; o = o.parent) if (!o.visible) return false;
+      return true;
+    }
+
+    // Canvas-та салынған суретті нысанның материалына текстура ретінде беру
+    function bindTexture(el, texture) {
+      const mesh = el.getObject3D('mesh');
+      if (mesh && mesh.material && mesh.material.map !== texture) {
+        mesh.material.map = texture;
+        mesh.material.needsUpdate = true;
+      }
+    }
+
+    /* =====================================================================
+       3. A-FRAME КОМПОНЕНТТЕРІ
+       ===================================================================== */
+
+    // Маркер оқиғалары: markerFound -> порталды ашу, markerLost -> жабу
+    AFRAME.registerComponent('portal-controller', {
+      init() {
+        this.isOpen = false;
+        this.lostTimer = null;
+        this.el.addEventListener('markerFound', () => this.onFound());
+        this.el.addEventListener('markerLost', () => this.onLost());
+      },
+      onFound() {
+        clearTimeout(this.lostTimer);
+        UI.status('✨ Маркер табылды — портал ашылды!');
+        if (this.isOpen) return;             // қысқа жыпылықтаудан кейін анимацияны қайталамаймыз
+        this.isOpen = true;
+        this.broadcast('portal-open');
+        Sound.portal();
+      },
+      onLost() {
+        UI.status('👀 Маркер жоғалды — қайта көрсетіңіз');
+        clearTimeout(this.lostTimer);
+        this.lostTimer = setTimeout(() => {  // 1,5 с көрінбесе — порталды бастапқы күйге қайтарамыз
+          this.isOpen = false;
+          this.broadcast('portal-reset');
+          UI.status(DEFAULT_STATUS);
+        }, 1500);
+      },
+      // .anim класы бар барлық ішкі нысандарға оқиға жіберу (анимациялар startEvents арқылы қосылады)
+      broadcast(name) {
+        this.el.querySelectorAll('.anim').forEach(e => e.emit(name, null, false));
+      }
+    });
+
+    // Екінші маркер: табылған сайын порталдағы әлемді ауыстырады
+    AFRAME.registerComponent('world-switch', {
+      init() {
+        this.lastSwitch = 0;
+        this.el.addEventListener('markerFound', () => {
+          const now = performance.now();
+          if (now - this.lastSwitch < 1500) return;   // жыпылықтаудан қорғаныс
+          this.lastSwitch = now;
+          Worlds.toggle();
+          const w = WORLDS[Worlds.current];
+          UI.status(`${w.icon} Әлем ауысты: ${w.name}`);
+          Sound.switch();
+        });
+      }
+    });
+
+    // Оккулюдер: түсті салмайды, тек тереңдікті жазады.
+    // Нәтижесінде портал ішіндегі нысандар тек тесік арқылы көрінеді, ал айналасында камера кескіні қалады.
+    AFRAME.registerComponent('occluder', {
+      init() {
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          mesh.traverse(o => {
+            if (!o.material) return;
+            o.material.colorWrite = false;
+            o.renderOrder = -1;                // басқа нысандардан бұрын салынады
+          });
+        };
+        apply();
+        this.el.addEventListener('object3dset', apply);
+      }
+    });
+
+    // Портал қабырғалары: жоғарыдан төмен қарай түс градиенті
+    AFRAME.registerComponent('gradient-walls', {
+      schema: { top: { type: 'color', default: '#2a1065' }, bottom: { type: 'color', default: '#000000' } },
+      init() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = 4; this.canvas.height = 256;
+        this.texture = new THREE.CanvasTexture(this.canvas);
+      },
+      update() {
+        const ctx = this.canvas.getContext('2d');
+        const g = ctx.createLinearGradient(0, 0, 0, 256);
+        g.addColorStop(0, this.data.top);
+        g.addColorStop(1, this.data.bottom);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 256);
+        this.texture.needsUpdate = true;
+      },
+      tick() { bindTexture(this.el, this.texture); }
+    });
+
+    // Процедуралық текстуралар: планета, тұмандық, құм
+    AFRAME.registerComponent('canvas-paint', {
+      schema: { type: { default: 'planet' } },
+      init() {
+        const c = document.createElement('canvas');
+        c.width = this.data.type === 'beam' ? 4 : 512;
+        c.height = this.data.type === 'planet' || this.data.type === 'beam' ? 256 : 512;
+        const ctx = c.getContext('2d'), w = c.width, h = c.height;
+        if (this.data.type === 'beam') {             // сәуле төменге жағына қарай біртіндеп жоғалады
+          const g = ctx.createLinearGradient(0, 0, 0, h);
+          g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        } else if (this.data.type === 'planet') {
+          const bands = ['#7a4a2c', '#a8683f', '#c98b5a', '#e0b083', '#f2dcc0', '#e8c39e'];
+          for (let y = 0; y < h; y++) {
+            const t = y / h;
+            const n = Math.sin(t * 22) * 0.5 + Math.sin(t * 57 + 1.3) * 0.3 + Math.sin(t * 9 + 0.4) * 0.6;
+            const i = Math.min(bands.length - 1, Math.max(0, Math.floor((n + 1.4) / 2.8 * bands.length)));
+            ctx.fillStyle = bands[i]; ctx.fillRect(0, y, w, 1);
+          }
+          ctx.fillStyle = 'rgba(190, 70, 45, 0.9)';  // «Үлкен қызыл дақ»
+          ctx.beginPath(); ctx.ellipse(w * 0.3, h * 0.62, w * 0.06, h * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+        } else if (this.data.type === 'nebula') {
+          ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+          ctx.globalCompositeOperation = 'lighter';
+          [['rgba(170,60,255,0.9)', 0.45, 0.5, 0.45], ['rgba(255,80,170,0.7)', 0.62, 0.38, 0.3],
+           ['rgba(60,140,255,0.6)', 0.33, 0.64, 0.3]].forEach(([col, x, y, r]) => {
+            const g = ctx.createRadialGradient(x * w, y * h, 0, x * w, y * h, r * w);
+            g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+          });
+          for (let i = 0; i < 300; i++) {
+            ctx.fillStyle = `rgba(255,255,255,${Math.random()})`;
+            ctx.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+          }
+          ctx.globalCompositeOperation = 'source-over';
+        } else if (this.data.type === 'sand') {
+          ctx.fillStyle = '#d9bf86'; ctx.fillRect(0, 0, w, h);
+          for (let i = 0; i < 4000; i++) {
+            const v = 150 + Math.random() * 90;
+            ctx.fillStyle = `rgb(${v},${v * 0.85},${v * 0.55})`;
+            ctx.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+          }
+        }
+        this.texture = new THREE.CanvasTexture(c);
+      },
+      tick() { bindTexture(this.el, this.texture); }
+    });
+
+    // Жұлдыздар: портал ішіндегі мыңдаған нүкте (THREE.Points)
+    AFRAME.registerComponent('starfield', {
+      schema: { count: { default: 450 }, depth: { default: 3 }, size: { default: 0.06 } },
+      init() {
+        const n = this.data.count, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+        const color = new THREE.Color();
+        for (let i = 0; i < n; i++) {
+          pos[i * 3]     = (Math.random() - 0.5) * 0.94;
+          pos[i * 3 + 1] = -0.05 - Math.random() * (this.data.depth - 0.1);
+          pos[i * 3 + 2] = (Math.random() - 0.5) * 0.94;
+          color.setHSL(0.55 + Math.random() * 0.25, 0.7, 0.75 + Math.random() * 0.25);
+          col.set([color.r, color.g, color.b], i * 3);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        // дөңгелек жұлдыз текстурасы
+        const c = document.createElement('canvas'); c.width = c.height = 32;
+        const ctx = c.getContext('2d'), g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 32, 32);
+        this.material = new THREE.PointsMaterial({
+          size: this.data.size, map: new THREE.CanvasTexture(c), vertexColors: true,
+          transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+        });
+        this.el.setObject3D('mesh', new THREE.Points(geo, this.material));
+      },
+      tick(t) { this.material.size = this.data.size * (0.85 + 0.15 * Math.sin(t / 300)); },  // жыпылықтау
+      remove() { this.el.removeObject3D('mesh'); }
+    });
+
+    // Көпіршіктер: түбінен шығып, порталдан ауаға көтеріледі
+    AFRAME.registerComponent('bubbles', {
+      schema: { count: { default: 18 }, bottom: { default: -1.35 }, top: { default: 0.9 } },
+      init() {
+        for (let i = 0; i < this.data.count; i++) {
+          const b = document.createElement('a-sphere');
+          const x = (Math.random() - 0.5) * 0.64, z = (Math.random() - 0.5) * 0.64;
+          const x2 = x + (Math.random() - 0.5) * 0.2, z2 = z + (Math.random() - 0.5) * 0.2;
+          const dur = Math.round(2500 + Math.random() * 3000), delay = Math.round(Math.random() * 3000);
+          b.setAttribute('radius', (0.012 + Math.random() * 0.025).toFixed(3));
+          b.setAttribute('segments-width', 10);
+          b.setAttribute('segments-height', 8);
+          b.setAttribute('material', 'shader: flat; color: #d6f6ff; transparent: true; opacity: 0.75');
+          b.setAttribute('position', `${x} ${this.data.bottom} ${z}`);
+          b.setAttribute('animation__rise',
+            `property: position; from: ${x} ${this.data.bottom} ${z}; to: ${x2} ${this.data.top} ${z2}; ` +
+            `dur: ${dur}; delay: ${delay}; loop: true; easing: easeInSine`);
+          b.setAttribute('animation__fade',
+            `property: material.opacity; from: 0.75; to: 0; dur: ${dur}; delay: ${delay}; loop: true; easing: easeInQuint`);
+          this.el.appendChild(b);
+        }
+      }
+    });
+
+    // Балықтың құйрығын бұлғау (жүзу әсері)
+    AFRAME.registerComponent('swim-wiggle', {
+      schema: { speed: { default: 9 }, amount: { default: 0.18 } },
+      init() { this.phase = Math.random() * Math.PI * 2; this.baseY = null; },
+      tick(t) {
+        const r = this.el.object3D.rotation;
+        if (this.baseY === null) this.baseY = r.y;
+        r.y = this.baseY + Math.sin(t / 1000 * this.data.speed + this.phase) * this.data.amount;
+      }
+    });
+
+    // Нысанды түрткенде: glTF материалының түсін ауыстыру + секіру + дыбыс (cursor + raycaster)
+    AFRAME.registerComponent('tappable', {
+      schema: {
+        part: { type: 'string' },              // glTF ішіндегі материал аты (мысалы, hull, body)
+        colors: { type: 'array' },
+        sound: { default: 'bloop' },
+        message: { type: 'string' }
+      },
+      init() {
+        this.colorIndex = 0;
+        this.ready = false;
+        this.el.addEventListener('click', () => this.onTap());
+      },
+      onTap() {
+        if (!isReallyVisible(this.el)) return;
+        const color = this.data.colors[this.colorIndex++ % this.data.colors.length];
+        const mesh = this.el.getObject3D('mesh');
+        if (mesh) mesh.traverse(o => {
+          if (o.material && o.material.name === this.data.part) o.material.color.set(color);
+        });
+        if (!this.ready) {                     // секіру анимациясын бірінші түрткенде құрамыз
+          const s = this.el.object3D.scale.x, big = (s * 1.35).toFixed(3);
+          this.el.setAttribute('animation__tap',
+            `property: scale; from: ${big} ${big} ${big}; to: ${s} ${s} ${s}; dur: 600; easing: easeOutElastic; startEvents: tapped`);
+          this.ready = true;
+        }
+        this.el.emit('tapped', null, false);
+        Sound[this.data.sound]();
+        UI.status(this.data.message);
+      }
+    });
+
+    // Ақпараттық тақта (мұражай экспонатының анықтамасы) — canvas-та салынады, қазақ әріптерін толық қолдайды
+    AFRAME.registerComponent('info-card', {
+      init() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = 1024; this.canvas.height = 640;
+        this.texture = new THREE.CanvasTexture(this.canvas);
+        this.draw(Worlds.current);
+        this.el.sceneEl.addEventListener('world-changed', e => this.draw(e.detail.world));
+      },
+      draw(key) {
+        const w = WORLDS[key], c = this.canvas, ctx = c.getContext('2d'), W = c.width, H = c.height;
+        const font = (size, bold) => `${bold ? 'bold ' : ''}${size}px system-ui, "Segoe UI", Roboto, sans-serif`;
+        ctx.clearRect(0, 0, W, H);
+        ctx.beginPath(); ctx.roundRect(14, 14, W - 28, H - 28, 48);
+        const g = ctx.createLinearGradient(0, 0, 0, H);
+        g.addColorStop(0, 'rgba(22, 16, 52, 0.92)'); g.addColorStop(1, 'rgba(6, 6, 20, 0.92)');
+        ctx.fillStyle = g; ctx.fill();
+        ctx.lineWidth = 8; ctx.strokeStyle = w.rim; ctx.shadowColor = w.rim; ctx.shadowBlur = 30;
+        ctx.stroke(); ctx.shadowBlur = 0;
+        ctx.fillStyle = w.rim; ctx.font = font(40, true); ctx.fillText('ЭКСПОНАТ №12', 64, 100);
+        ctx.fillStyle = '#fff'; ctx.font = font(76, true); ctx.fillText(`${w.icon} ${w.title}`, 64, 190);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.88)'; ctx.font = font(38);
+        w.lines.forEach((line, i) => ctx.fillText(line, 64, 275 + i * 62));
+        this.texture.needsUpdate = true;
+      },
+      tick() { bindTexture(this.el, this.texture); }
+    });
+
+    // AR.js камераның проекция матрицасын өзі орнатады, ал кері матрица жаңармайды.
+    // Онсыз cursor/raycaster түрткен жерді қате есептейді — сондықтан әр кадрда жаңартамыз.
+    AFRAME.registerComponent('ar-raycast-fix', {
+      tick() {
+        const cam = this.el.getObject3D('camera');
+        if (cam) cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <!-- Бастапқы экран: түрту дыбысты іске қосуға рұқсат береді -->
+  <div id="intro">
+    <div class="card">
+      <h1>🛸 Ғарыш порталы</h1>
+      <p class="sub">Зертханалық жұмыс №12 · WebAR (AR.js + A-Frame)</p>
+      <ol>
+        <li><b>markers/print.html</b> бетінен маркерлерді басып шығарыңыз (немесе екінші экранда ашыңыз).</li>
+        <li>Камераға рұқсат беріңіз.</li>
+        <li>🔑 <b>Кілт</b> маркерін көрсетіңіз — үстелде портал ашылады.</li>
+        <li>⚡ <b>Найзағай</b> маркері порталдағы әлемді ауыстырады.</li>
+        <li>👆 Тәрелкені немесе балықты түртіп көріңіз.</li>
+      </ol>
+      <button id="start-btn">Бастау 🚀</button>
+      <div class="note">🔊 Дыбысты қосыңыз</div>
+    </div>
+  </div>
+
+  <div id="status">🔑 Кілт-маркерді камераға көрсетіңіз</div>
+  <div id="world-chip">🪐 Әлем: Ғарыш</div>
+
+  <a-scene embedded
+           arjs="sourceType: webcam; debugUIEnabled: false; patternRatio: 0.5"
+           renderer="antialias: true; alpha: true; sortObjects: true"
+           vr-mode-ui="enabled: false"
+           loading-screen="enabled: false"
+           device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <a-asset-item id="ufo-glb" src="models/ufo.glb"></a-asset-item>
+      <a-asset-item id="fish-glb" src="models/fish.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- Жарық -->
+    <a-entity light="type: ambient; intensity: 0.75"></a-entity>
+    <a-entity light="type: directional; intensity: 0.9" position="1 3 2"></a-entity>
+
+    <!-- ============ 1-МАРКЕР «КІЛТ»: үстелдегі портал ============ -->
+    <a-marker id="key-marker" type="pattern" url="markers/pattern-key.patt"
+              portal-controller emitevents="true"
+              smooth="true" smoothCount="8" smoothTolerance="0.01" smoothThreshold="4">
+
+      <!-- Маска: тесіктің айналасындағы «үстел беті». Портал ішін жасырады, камера кескіні көрінеді -->
+      <a-entity id="mask">
+        <a-plane occluder rotation="-90 0 0" position="0 0 -5.5"  width="21" height="10"></a-plane>
+        <a-plane occluder rotation="-90 0 0" position="0 0 5.5"   width="21" height="10"></a-plane>
+        <a-plane occluder rotation="-90 0 0" position="-5.5 0 0"  width="10" height="1"></a-plane>
+        <a-plane occluder rotation="-90 0 0" position="5.5 0 0"   width="10" height="1"></a-plane>
+      </a-entity>
+
+      <!-- Қақпақ: портал жабық тұрғанда тесікті жабады, markerFound кезінде кішірейіп ашылады -->
+      <a-plane id="lid" class="anim" occluder rotation="-90 0 0" position="0 0.002 0" width="1.02" height="1.02"
+               animation__open="property: scale; from: 1 1 1; to: 0.001 0.001 1; dur: 900; easing: easeInOutCubic; startEvents: portal-open"
+               animation__reset="property: scale; to: 1 1 1; dur: 1; startEvents: portal-reset"></a-plane>
+
+      <!-- Жарқыраған жиек -->
+      <a-entity id="rim" class="anim" scale="0.001 0.001 0.001"
+                animation__open="property: scale; from: 0.001 0.001 0.001; to: 1 1 1; dur: 700; delay: 300; easing: easeOutBack; startEvents: portal-open"
+                animation__reset="property: scale; to: 0.001 0.001 0.001; dur: 1; startEvents: portal-reset">
+        <a-entity animation="property: scale; from: 1 1 1; to: 1.04 1 1.04; dir: alternate; loop: true; dur: 900; easing: easeInOutSine">
+          <a-box class="rim-edge" position="0 0.01 -0.5" width="1.06" height="0.02" depth="0.03" material="shader: flat; color: #b388ff"></a-box>
+          <a-box class="rim-edge" position="0 0.01 0.5"  width="1.06" height="0.02" depth="0.03" material="shader: flat; color: #b388ff"></a-box>
+          <a-box class="rim-edge" position="-0.5 0.01 0" width="0.03" height="0.02" depth="1.06" material="shader: flat; color: #b388ff"></a-box>
+          <a-box class="rim-edge" position="0.5 0.01 0"  width="0.03" height="0.02" depth="1.06" material="shader: flat; color: #b388ff"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- Портал шахтасы: ішкі қабырғалар (side: back — қораптың ішкі жағы көрінеді) -->
+      <a-box id="shaft" position="0 -1.5 0" width="1" height="3" depth="1"
+             material="shader: flat; side: back; color: #ffffff"
+             gradient-walls="top: #2a1065; bottom: #020008"></a-box>
+
+      <!-- ----- Әлем 1: ҒАРЫШ ----- -->
+      <a-entity id="world-space">
+        <a-entity starfield="count: 450; depth: 3"></a-entity>
+        <a-plane canvas-paint="type: nebula" position="0 -2.98 0" rotation="-90 0 0" width="1" height="1"
+                 material="shader: flat; color: #ffffff"></a-plane>
+
+        <!-- Сақиналы планета мен оның серігі -->
+        <a-entity position="-0.24 -0.75 -0.22">
+          <a-sphere radius="0.14" canvas-paint="type: planet" material="color: #ffffff; roughness: 0.9"
+                    animation="property: rotation; to: 0 360 0; loop: true; dur: 14000; easing: linear"></a-sphere>
+          <a-ring radius-inner="0.18" radius-outer="0.25" rotation="-35 0 25"
+                  material="side: double; color: #e8c38a; transparent: true; opacity: 0.8"></a-ring>
+          <a-entity animation="property: rotation; to: 0 360 0; loop: true; dur: 6000; easing: linear">
+            <a-sphere radius="0.035" position="0.24 0.04 0" color="#cfd8dc"></a-sphere>
+          </a-entity>
+        </a-entity>
+
+        <!-- Ұшатын тәрелке (glTF): порталдан көтеріліп, үстінде қалықтайды -->
+        <a-entity id="ufo-rig" class="anim" position="0 -2 0"
+                  animation__rise="property: position; from: 0 -2 0; to: 0 0.85 0; dur: 2200; delay: 600; easing: easeOutCubic; startEvents: portal-open"
+                  animation__reset="property: position; to: 0 -2 0; dur: 1; startEvents: portal-reset">
+          <a-entity rotation="6 0 4"
+                    animation="property: position; from: 0 0 0; to: 0 0.08 0; dir: alternate; loop: true; dur: 1400; easing: easeInOutSine">
+            <a-entity id="ufo" class="clickable" gltf-model="#ufo-glb" scale="0.42 0.42 0.42"
+                      animation="property: rotation; to: 0 360 0; loop: true; dur: 5000; easing: linear"
+                      tappable="part: hull; colors: #ff4d6d, #ffd166, #06d6a0, #4cc9f0, #c77dff, #c7ccd8; sound: ufo; message: 🛸 Тәрелке түсін өзгертті!"></a-entity>
+            <!-- Жарық сәулесі -->
+            <a-cone class="anim" canvas-paint="type: beam" position="0 -0.75 0" radius-top="0.04" radius-bottom="0.32" height="1.5" open-ended="true"
+                    material="shader: flat; color: #7df9ff; transparent: true; opacity: 0; side: double; blending: additive; depthWrite: false"
+                    animation__show="property: material.opacity; from: 0; to: 0.35; dur: 600; delay: 2700; startEvents: portal-open"
+                    animation__reset="property: material.opacity; to: 0; dur: 1; startEvents: portal-reset"></a-cone>
+          </a-entity>
+        </a-entity>
+      </a-entity>
+
+      <!-- ----- Әлем 2: МҰХИТ ----- -->
+      <a-entity id="world-ocean" visible="false">
+        <a-plane canvas-paint="type: sand" position="0 -1.4 0" rotation="-90 0 0" width="1" height="1"
+                 material="shader: flat; color: #ffffff"></a-plane>
+        <a-dodecahedron radius="0.08" position="-0.28 -1.37 0.22" color="#6d7b8d"></a-dodecahedron>
+        <a-dodecahedron radius="0.05" position="0.3 -1.38 -0.3" color="#7f8c9d"></a-dodecahedron>
+
+        <!-- Балдырлар (төменгі ұшынан тербеледі) -->
+        <a-entity position="-0.32 -1.4 -0.3" animation="property: rotation; from: -8 0 -6; to: 8 0 6; dir: alternate; loop: true; dur: 2200; easing: easeInOutSine">
+          <a-cone position="0 0.25 0" radius-bottom="0.035" radius-top="0.005" height="0.5" color="#2e8b57"></a-cone>
+        </a-entity>
+        <a-entity position="0.33 -1.4 0.1" animation="property: rotation; from: 6 0 8; to: -6 0 -8; dir: alternate; loop: true; dur: 2600; easing: easeInOutSine">
+          <a-cone position="0 0.3 0" radius-bottom="0.04" radius-top="0.005" height="0.6" color="#3cb371"></a-cone>
+        </a-entity>
+        <a-entity position="-0.1 -1.4 0.32" animation="property: rotation; from: -6 0 4; to: 6 0 -4; dir: alternate; loop: true; dur: 1900; easing: easeInOutSine">
+          <a-cone position="0 0.2 0" radius-bottom="0.03" radius-top="0.005" height="0.4" color="#228b22"></a-cone>
+        </a-entity>
+
+        <!-- Қазына сандығы -->
+        <a-entity position="0.12 -1.35 -0.18" rotation="0 -25 0">
+          <a-box width="0.16" height="0.09" depth="0.11" color="#8b5a2b"></a-box>
+          <a-box position="0 0.07 -0.04" rotation="-35 0 0" width="0.16" height="0.02" depth="0.11" color="#a0522d"></a-box>
+          <a-sphere position="0 0.06 0.01" radius="0.035" material="color: #ffd700; emissive: #b8860b; emissiveIntensity: 0.8"
+                    animation="property: scale; from: 1 1 1; to: 1.25 1.25 1.25; dir: alternate; loop: true; dur: 800"></a-sphere>
+        </a-entity>
+
+        <!-- Шеңбер бойымен жүзетін балықтар (glTF) -->
+        <a-entity position="0 -0.45 0" animation="property: rotation; to: 0 360 0; loop: true; dur: 7000; easing: linear">
+          <a-entity class="clickable" gltf-model="#fish-glb" position="0.3 0 0" rotation="0 90 0" scale="0.55 0.55 0.55" swim-wiggle
+                    tappable="part: body; colors: #ff4d6d, #ffd166, #06d6a0, #4cc9f0, #c77dff, #ff8c42; sound: bloop; message: 🐟 Балық түсін өзгертті!"></a-entity>
+        </a-entity>
+        <a-entity position="0 -0.75 0" animation="property: rotation; from: 0 120 0; to: 0 -240 0; loop: true; dur: 9000; easing: linear">
+          <a-entity class="clickable" gltf-model="#fish-glb" position="0.25 0 0" rotation="0 -90 0" scale="0.45 0.45 0.45" swim-wiggle
+                    tappable="part: body; colors: #4cc9f0, #ffd166, #06d6a0, #ff4d6d, #c77dff, #ff8c42; sound: bloop; message: 🐟 Балық түсін өзгертті!"></a-entity>
+        </a-entity>
+        <a-entity position="0 -1.05 0" animation="property: rotation; from: 0 200 0; to: 0 560 0; loop: true; dur: 8000; easing: linear">
+          <a-entity class="clickable" gltf-model="#fish-glb" position="0.28 0 0" rotation="0 90 0" scale="0.5 0.5 0.5" swim-wiggle
+                    tappable="part: body; colors: #06d6a0, #ffd166, #4cc9f0, #ff4d6d, #c77dff, #ff8c42; sound: bloop; message: 🐟 Балық түсін өзгертті!"></a-entity>
+        </a-entity>
+
+        <!-- Порталдан секіріп шығатын балық: тігінен шеңбер бойымен қозғалады -->
+        <a-entity position="0 -0.15 0" animation="property: rotation; from: 0 0 0; to: 0 0 360; loop: true; dur: 4200; easing: linear">
+          <a-entity class="clickable" gltf-model="#fish-glb" position="0.45 0 0" rotation="0 0 90" scale="0.5 0.5 0.5"
+                    tappable="part: body; colors: #c77dff, #ffd166, #06d6a0, #4cc9f0, #ff4d6d, #ff8c42; sound: bloop; message: 🐟 Балық түсін өзгертті!"></a-entity>
+        </a-entity>
+
+        <a-entity bubbles="count: 18; bottom: -1.35; top: 0.9"></a-entity>
+      </a-entity>
+
+      <!-- Мұражай тақтасы: экспонаттың алдында, көрерменге қарай еңкейтілген мәтіндік анықтама -->
+      <a-plane id="info" class="anim" info-card position="0 0.28 1.12" rotation="-68 0 0" width="0.9" height="0.56"
+               material="shader: flat; color: #ffffff; transparent: true; side: double" scale="0.001 0.001 0.001"
+               animation__open="property: scale; from: 0.001 0.001 0.001; to: 1 1 1; dur: 700; delay: 1300; easing: easeOutBack; startEvents: portal-open"
+               animation__reset="property: scale; to: 0.001 0.001 0.001; dur: 1; startEvents: portal-reset"></a-plane>
+    </a-marker>
+
+    <!-- ============ 2-МАРКЕР «НАЙЗАҒАЙ»: әлемді ауыстырғыш ============ -->
+    <a-marker id="bolt-marker" type="pattern" url="markers/pattern-bolt.patt"
+              world-switch emitevents="true"
+              smooth="true" smoothCount="8" smoothTolerance="0.01" smoothThreshold="4">
+      <a-entity position="0 0.55 0" animation="property: rotation; to: 0 360 0; loop: true; dur: 3000; easing: linear">
+        <a-octahedron id="switch-gem" radius="0.28" material="shader: flat; color: #4dd0e1; transparent: true; opacity: 0.85"></a-octahedron>
+        <a-octahedron radius="0.34" material="shader: flat; color: #ffffff; wireframe: true"></a-octahedron>
+      </a-entity>
+      <a-text value="WORLD SWITCH" position="0 1.05 0" align="center" width="3" color="#ffffff"></a-text>
+    </a-marker>
+
+    <!-- Камера + экранды түрту арқылы нысан таңдау (cursor + raycaster) -->
+    <a-entity camera ar-raycast-fix
+              cursor="rayOrigin: mouse; fuse: false"
+              raycaster="objects: .clickable; far: 100"></a-entity>
+  </a-scene>
+
+  <script>
+    // «Бастау» батырмасы: дыбысты іске қосып, бастапқы экранды жасырады
+    document.getElementById('start-btn').addEventListener('click', () => {
+      Sound.unlock();
+      document.getElementById('intro').remove();
+    });
+
+    // Камерасыз тексеру режимі: index.html?test=test/key.jpg
+    // AR.js камераның орнына дайын суреттен маркерді іздейді.
+    const testImage = new URLSearchParams(location.search).get('test');
+    if (testImage) {
+      // AR.js кадр өлшемін videoWidth/videoHeight арқылы оқиды, ал <img>-де олар жоқ.
+      // Сондықтан суреттің нақты өлшемін береміз — әйтпесе сахна созылып көрінеді.
+      Object.defineProperty(HTMLImageElement.prototype, 'videoWidth', { get() { return this.naturalWidth; } });
+      Object.defineProperty(HTMLImageElement.prototype, 'videoHeight', { get() { return this.naturalHeight; } });
+      document.querySelector('a-scene').setAttribute('arjs',
+        `sourceType: image; sourceUrl: ${testImage}; debugUIEnabled: false; patternRatio: 0.5`);
+      document.getElementById('intro').remove();
+    }
+  </script>
+</body>
+</html>

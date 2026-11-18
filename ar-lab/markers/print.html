@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="kk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Маркерлер — басып шығару</title>
+  <style>
+    @page { size: A4; margin: 15mm; }
+    body { margin: 0; padding: 16px; font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #111; background: #fff; }
+    h1 { margin: 0 0 6mm; font-size: 18pt; text-align: center; }
+    .sheet { display: flex; flex-wrap: wrap; gap: 8mm; justify-content: center; }
+    figure { margin: 0; text-align: center; }
+    img { display: block; width: 8.5cm; height: 8.5cm; }
+    figcaption { margin-top: 3mm; font-size: 13pt; }
+    .tips { max-width: 175mm; margin: 8mm auto 0; font-size: 11pt; line-height: 1.5; }
+    .noprint { text-align: center; margin-bottom: 12px; }
+    .noprint button { padding: 10px 18px; font-size: 15px; border-radius: 10px; border: 1px solid #999; background: #f4f4f4; cursor: pointer; }
+    @media print { .noprint { display: none; } }
+    @media (max-width: 700px) { img { width: 80vw; height: 80vw; } }
+  </style>
+</head>
+<body>
+  <div class="noprint">
+    <button onclick="print()">🖨 Басып шығару</button>
+    <p>Принтер болмаса — маркерді екінші экранда (телефонда) ашып, жарықтығын барынша арттырыңыз.</p>
+  </div>
+
+  <h1>Ғарыш порталы — AR маркерлері</h1>
+  <div class="sheet">
+    <figure>
+      <img src="key.png" alt="Кілт маркері">
+      <figcaption>🔑 <b>Кілт</b> — порталды ашады</figcaption>
+    </figure>
+    <figure>
+      <img src="bolt.png" alt="Найзағай маркері">
+      <figcaption>⚡ <b>Найзағай</b> — әлемді ауыстырады</figcaption>
+    </figure>
+  </div>
+
+  <div class="tips">
+    <b>Кеңестер:</b>
+    <ul>
+      <li>Масштабсыз (100%) басып шығарыңыз, мат қағаз жақсырақ.</li>
+      <li>Маркердің айналасындағы ақ жиекті кеспеңіз — ол тану үшін керек.</li>
+      <li>Маркерді үстелге жатқызыңыз, телефонды жоғарыдан 30–60° бұрышпен ұстаңыз.</li>
+      <li>Жарық жақсы болсын, маркерде жылтыр мен көлеңке болмасын, камера оны толық көрсін.</li>
+    </ul>
+  </div>
+</body>
+</html>
